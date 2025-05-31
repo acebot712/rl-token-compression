@@ -31,7 +31,8 @@ Our system consists of three main components:
 │   │   ├── test_policy.py # Test script for policy
 │   │   └── __init__.py
 │   └── reconstructor/     # Fine-tuned GPT-2 for token reconstruction
-│       ├── train.py       # Training script
+│       ├── train_gpu.py   # GPU training script
+│       ├── train_cpu.py   # CPU training script
 │       ├── test_train.py  # Test script
 │       ├── output/        # Training outputs
 │       └── fine-tuned/    # Fine-tuned model checkpoints
@@ -100,19 +101,32 @@ python models/reconstructor/train_cpu.py \
     --mask_ratio 0.3
 ```
 
-GPU version:
+GPU version (CUDA):
 ```bash
-python models/reconstructor/train.py \
+python models/reconstructor/train_gpu.py \
     --data_path data/processed/processed_data.json \
     --output_dir models/reconstructor/fine-tuned \
-    --device mps \
+    --device cuda \
     --max_length 512 \
     --use_amp \
     --gradient_accumulation_steps 4 \
     --batch_size 4
 ```
 
-### 4. RL Training
+MPS (Apple Silicon) version:
+```bash
+python models/reconstructor/train_gpu.py \
+    --data_path data/processed/processed_data.json \
+    --output_dir models/reconstructor/fine-tuned \
+    --device mps \
+    --max_length 512 \
+    --gradient_accumulation_steps 4 \
+    --batch_size 4
+```
+
+**Note:** AMP (Automatic Mixed Precision) is automatically disabled for MPS devices to ensure training stability.
+
+### 3. RL Training
 
 Train the RL agent with PPO:
 ```bash
@@ -126,7 +140,7 @@ python rl/train.py \
     --gamma 0.99
 ```
 
-### 5. Evaluation
+### 4. Evaluation
 
 Evaluate the trained model with comprehensive metrics:
 ```bash
@@ -137,7 +151,7 @@ python eval/evaluate.py \
     --num_sequences 100
 ```
 
-### 6. Visualization
+### 5. Visualization
 
 Generate visualization plots:
 ```bash

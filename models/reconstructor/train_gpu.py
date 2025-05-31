@@ -74,6 +74,18 @@ class MaskedSequenceDataset(Dataset):
             # Create random mask
             mask = torch.rand(len(tokens)) < self.mask_ratio
             
+            # CRITICAL FIX: Ensure at least one token is always unmasked
+            # If all tokens are masked, randomly unmask one
+            if mask.all() and len(tokens) > 0:
+                unmask_idx = random.randint(0, len(tokens) - 1)
+                mask[unmask_idx] = False
+            
+            # Also ensure we don't mask too few tokens (for learning)
+            # If no tokens are masked, randomly mask at least one
+            if not mask.any() and len(tokens) > 1:
+                mask_idx = random.randint(0, len(tokens) - 1)
+                mask[mask_idx] = True
+            
             # Apply mask
             original_tokens = torch.tensor(tokens, dtype=torch.long)
             masked_tokens = original_tokens.clone()
@@ -95,6 +107,13 @@ class MaskedSequenceDataset(Dataset):
             attention_mask = torch.ones_like(masked_tokens)
             if padding_length > 0:
                 attention_mask[-padding_length:] = 0
+            
+            # Validation: Ensure we have valid data
+            assert not torch.isnan(original_tokens).any(), "NaN found in original tokens"
+            assert not torch.isnan(masked_tokens).any(), "NaN found in masked tokens"
+            assert not torch.isnan(attention_mask.float()).any(), "NaN found in attention mask"
+            assert (original_tokens >= 0).all(), "Negative token IDs found"
+            assert (masked_tokens >= 0).all(), "Negative masked token IDs found"
             
             return {
                 "input_ids": masked_tokens,
@@ -164,17 +183,27 @@ def train_reconstructor(
             device = "cpu"
     print(f"Using device: {device}")
     
+    # CRITICAL FIX: Disable AMP for MPS as it's not stable
+    if device == "mps":
+        use_amp = False
+        print("Disabled AMP for MPS device due to stability issues")
+    
     # Initialize model with memory-efficient options
+    # CRITICAL FIX: Use float32 for MPS instead of float16
+    model_dtype = torch.float32
+    if use_amp and device == "cuda":
+        model_dtype = torch.float16
+        
     model = GPT2LMHeadModel.from_pretrained(
         model_name,
-        torch_dtype=torch.float16 if use_amp and device in ["cuda", "mps"] else torch.float32,
+        torch_dtype=model_dtype,
         low_cpu_mem_usage=True
     ).to(device)
     
     if memory_efficient_attention:
         model.config.use_cache = False
     
-    # Initialize mixed precision training
+    # Initialize mixed precision training (only for CUDA)
     scaler = torch.cuda.amp.GradScaler() if use_amp and device == "cuda" else None
     
     # Create dataset and dataloader
@@ -237,6 +266,21 @@ def train_reconstructor(
                 
                 loss = outputs.loss / gradient_accumulation_steps
                 
+                # CRITICAL FIX: Validate loss to catch NaN early
+                if torch.isnan(loss) or torch.isinf(loss):
+                    print(f"WARNING: Invalid loss detected at step {step}")
+                    print(f"Loss value: {loss.item()}")
+                    print(f"Input IDs shape: {input_ids.shape}")
+                    print(f"Labels shape: {labels.shape}")
+                    print(f"Attention mask shape: {attention_mask.shape}")
+                    print(f"Input IDs range: {input_ids.min().item()} to {input_ids.max().item()}")
+                    print(f"Labels range: {labels.min().item()} to {labels.max().item()}")
+                    print(f"Number of non-padding tokens: {attention_mask.sum().item()}")
+                    
+                    # Skip this batch instead of propagating NaN
+                    print("Skipping batch due to invalid loss")
+                    continue
+                
                 # Backward pass with mixed precision
                 if use_amp and device == "cuda":
                     scaler.scale(loss).backward()
@@ -257,8 +301,9 @@ def train_reconstructor(
                     optimizer.zero_grad()
                 
                 # Update progress
-                epoch_loss += loss.item() * gradient_accumulation_steps
-                progress_bar.set_postfix({"loss": loss.item() * gradient_accumulation_steps})
+                current_loss = loss.item() * gradient_accumulation_steps
+                epoch_loss += current_loss
+                progress_bar.set_postfix({"loss": current_loss})
                 global_step += 1
                 
                 # Save checkpoint
@@ -281,6 +326,12 @@ def train_reconstructor(
         
         # Epoch statistics
         avg_loss = epoch_loss / len(dataloader)
+        
+        # CRITICAL FIX: Handle case where loss might be NaN due to all batches being skipped
+        if torch.isnan(torch.tensor(avg_loss)) or torch.isinf(torch.tensor(avg_loss)):
+            print(f"WARNING: Invalid average loss for epoch {epoch+1}: {avg_loss}")
+            avg_loss = float('inf')  # Set to infinity to indicate failure
+        
         print(f"Epoch {epoch+1}/{epochs} - Average Loss: {avg_loss:.4f}")
         
         training_stats.append({
