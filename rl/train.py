@@ -45,18 +45,21 @@ def train(
     reconstructor = GPT2LMHeadModel.from_pretrained(
         reconstructor_path if os.path.exists(reconstructor_path) else "gpt2"
     ).to(device)
+
+    embedding_size = reconstructor.transformer.wte.weight.shape[1]
     
     print(f"Using reconstructor from: {reconstructor_path}")
     print("Reconstructor model loaded successfully")
     
     # Create environment
     print("Creating environment...")
+    context_window = 32
     env = TokenCompressionEnv(
         tokenizer=tokenizer,
         reconstructor=reconstructor,
         data_path=data_path,
         max_seq_length=1024,
-        context_window=32,
+        context_window=context_window,
         device=device
     )
     env = DummyVecEnv([lambda: env])
@@ -65,7 +68,7 @@ def train(
     policy_kwargs = dict(
         features_extractor_class=TokenCompressionPolicy,
         features_extractor_kwargs=dict(
-            input_dim=tokenizer.vocab_size + 32,  # vocab_size + context_window
+            input_dim=embedding_size + context_window,
             hidden_dim=256,
             num_layers=3,
             dropout=0.1
