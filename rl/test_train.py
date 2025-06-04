@@ -100,7 +100,8 @@ def test_agent_training():
     os.makedirs("rl/test_output", exist_ok=True)
     test_model_path = "rl/test_output/test_model.zip"
     ppo_agent.save(test_model_path)
-    
+    assert os.path.exists(test_model_path)
+
     print(f"Agent trained and saved to {test_model_path}")
     print("Agent training test passed!")
 
