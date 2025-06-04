@@ -94,6 +94,10 @@ class TokenImportanceAttention(nn.Module):
         )
         
         self.dropout = nn.Dropout(dropout)
+        # Pre-compute scaling factor for attention scores to avoid
+        # creating tensors on every forward pass and ensure the value
+        # stays on the correct device.
+        self.scale = self.head_dim ** 0.5
         
     def forward(
         self,
@@ -118,7 +122,8 @@ class TokenImportanceAttention(nn.Module):
         v = self.v_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         
         # Compute attention scores
-        scores = torch.matmul(q, k.transpose(-2, -1)) / torch.sqrt(torch.tensor(self.head_dim).float())
+        # Scale dot-product by the precomputed factor to stabilize gradients
+        scores = torch.matmul(q, k.transpose(-2, -1)) / self.scale
         
         # Apply mask if provided
         if mask is not None:
