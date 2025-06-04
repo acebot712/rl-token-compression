@@ -143,7 +143,9 @@ class TokenCompressionEnv(gym.Env):
         Execute one step in the environment.
         
         Args:
-            action: Array of binary decisions (0: mask, 1: keep)
+            action: Array of decisions for each token. Values may be continuous in
+                the range ``[0, 1]``; any value greater than ``0.5`` is treated as
+                ``"keep"`` while lower values are treated as ``"mask"``.
             
         Returns:
             observation: Next state
