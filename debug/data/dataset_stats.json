@@ -1,0 +1,11 @@
+{
+  "total_sequences": 100,
+  "train_sequences": 70,
+  "val_sequences": 20,
+  "test_sequences": 10,
+  "avg_length": 229.72,
+  "max_length": 512,
+  "min_length": 14,
+  "tokenizer": "gpt2",
+  "dataset_name": "reddit"
+}

@@ -1,0 +1,14 @@
+{
+  "output_dir": "debug/data",
+  "max_sequences": 100,
+  "max_length": 512,
+  "min_length": 50,
+  "train_split": 0.7,
+  "val_split": 0.2,
+  "test_split": 0.1,
+  "tokenizer": "gpt2",
+  "dataset_name": "reddit",
+  "filter_duplicates": false,
+  "random_seed": 42,
+  "comment": "Small dataset for development testing - 100 sequences only"
+}

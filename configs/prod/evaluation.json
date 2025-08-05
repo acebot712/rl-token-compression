@@ -1,0 +1,16 @@
+{
+  "model_path": "results/joint_training/best_model.pt",
+  "data_path": "data/processed/test_data.json",
+  "output_dir": "eval/results",
+  "reconstructor_path": "models/reconstructor/fine-tuned/checkpoint-5000",
+  "num_sequences": 5000,
+  "batch_size": 64,
+  "include_baselines": true,
+  "baselines": ["random", "frequency", "length", "position", "entropy", "learned_entropy", "transformer_based"],
+  "metrics": ["compression_ratio", "bleu_score", "semantic_similarity", "reconstruction_loss", "perplexity", "rouge_score"],
+  "device": "auto",
+  "statistical_significance": true,
+  "bootstrap_samples": 1000,
+  "confidence_interval": 0.95,
+  "comment": "Comprehensive production evaluation with statistical rigor and extended baselines"
+}

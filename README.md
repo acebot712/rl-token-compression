@@ -17,10 +17,10 @@ Our system consists of three main components:
 ## Files and What They Do
 
 ### Core Scripts (what you'll actually run)
-- **`rl/train.py`** - Main training script (trains both agent and reconstructor jointly)
-- **`data/prepare_main.py`** - Prepares datasets for training (tokenization, train/val/test splits)
-- **`eval/eval_main.py`** - Comprehensive evaluation with baselines and metrics
-- **`eval/baselines_main.py`** - Run just baseline compression methods
+- **`scripts/train_rl.py`** - Main training script (trains both agent and reconstructor jointly)
+- **`scripts/prepare_data.py`** - Prepares datasets for training (tokenization, train/val/test splits)
+- **`scripts/run_evaluation.py`** - Comprehensive evaluation with baselines and metrics
+- **`scripts/run_baselines.py`** - Run just baseline compression methods
 - **`tests/test_system.py`** - Test all components work correctly
 
 ### Core Implementation
@@ -33,10 +33,11 @@ Our system consists of three main components:
 - **`utils/common.py`** - Shared utilities
 
 ### Configuration Files
-- **`configs/quick_test.json`** - Fast testing (2 epochs, gpt2 reconstructor)
-- **`configs/full_training.json`** - Production training setup
-- **`configs/data_prep.json`** - Data preparation settings
-- **`configs/evaluation.json`** - Comprehensive evaluation settings
+- **`configs/dev/quick_test.json`** - Fast testing (2 epochs, gpt2 reconstructor)
+- **`configs/dev/debug.json`** - Ultra-fast debug (1 epoch, minimal batch)
+- **`configs/prod/full_training.json`** - Production training setup
+- **`configs/prod/data_prep.json`** - Data preparation settings
+- **`configs/prod/evaluation.json`** - Comprehensive evaluation settings
 
 ## Installation
 
@@ -50,16 +51,63 @@ python tests/test_system.py
 
 ## Step-by-Step Usage
 
-### Step 1: Prepare Your Data
+The configs are organized into two categories:
+- **`configs/dev/`** - Fast configs for development, debugging, and quick testing
+- **`configs/prod/`** - Full configs for research runs and final results
 
-**Option A: Use config file (recommended)**
+### Development Workflow (Quick Testing)
+
+**Step 1: Create sample data for development**
 ```bash
-python data/prepare_main.py --config configs/data_prep.json
+python scripts/prepare_data.py --config configs/dev/sample_data.json
 ```
 
-**Option B: Customize with CLI args**
+**Step 2: Debug training (ultra-fast)**
 ```bash
-python data/prepare_main.py \
+python scripts/train_rl.py --config configs/dev/debug.json
+```
+
+**Step 3: Quick evaluation**
+```bash
+python scripts/run_evaluation.py --config configs/dev/quick_eval.json
+```
+
+### Production Workflow (Research Results)
+
+**Step 1: Prepare full dataset**
+```bash
+python scripts/prepare_data.py --config configs/prod/data_prep.json
+```
+
+**Step 2: Full training**
+```bash
+# Standard production training
+python scripts/train_rl.py --config configs/prod/full_training.json
+
+# Or large-scale training for final results  
+python scripts/train_rl.py --config configs/prod/large_scale_training.json
+```
+
+**Step 3: Comprehensive evaluation**
+```bash
+python scripts/run_evaluation.py --config configs/prod/evaluation.json
+```
+
+### Data Preparation Details
+
+**Development data (100 sequences):**
+```bash
+python scripts/prepare_data.py --config configs/dev/sample_data.json
+```
+
+**Production data (50,000 sequences):**
+```bash
+python scripts/prepare_data.py --config configs/prod/data_prep.json
+```
+
+**Custom data preparation:**
+```bash
+python scripts/prepare_data.py \
   --output_dir data/processed \
   --max_sequences 50000 \
   --max_length 1024 \
@@ -80,7 +128,7 @@ If you want to fine-tune your own reconstructor instead of using gpt2:
 
 **GPU training:**
 ```bash
-python models/reconstructor/train_gpu.py \
+python scripts/train_reconstructor_gpu.py \
   --data_path data/processed/processed_data.json \
   --output_dir models/reconstructor/fine-tuned \
   --device cuda \
@@ -90,7 +138,7 @@ python models/reconstructor/train_gpu.py \
 
 **CPU training:**
 ```bash
-python models/reconstructor/train_cpu.py \
+python scripts/train_reconstructor_cpu.py \
   --data_path data/processed/processed_data.json \
   --output_dir models/reconstructor/fine-tuned \
   --epochs 3 \
@@ -100,90 +148,66 @@ python models/reconstructor/train_cpu.py \
 **What this creates:**
 - `models/reconstructor/fine-tuned/` (fine-tuned model checkpoints)
 
-### Step 3: Train the Compression System
+### Available Training Configs
 
-**Option A: Quick test (recommended first)**
-```bash
-python rl/train.py --config configs/quick_test.json
-```
+**Development configs (fast):**
+- `configs/dev/debug.json` - 1 epoch, batch_size=2 (ultra-fast testing)
+- `configs/dev/quick_test.json` - 2 epochs, batch_size=4 (quick validation)
+- `configs/dev/ablation_study.json` - 20 epochs, batch_size=8 (ablation studies)
 
-**Option B: Full training with config**
-```bash
-python rl/train.py --config configs/full_training.json
-```
+**Production configs (research quality):**
+- `configs/prod/full_training.json` - 100 epochs, batch_size=32 (standard research)
+- `configs/prod/large_scale_training.json` - 200 epochs, batch_size=64 (final results)
 
-**Option C: Full training with CLI args**
-```bash
-python rl/train.py \
-  --data_path data/processed/processed_data.json \
-  --output_dir results/joint_training \
-  --reconstructor_path models/reconstructor/fine-tuned \
-  --max_epochs 50 \
-  --batch_size 16 \
-  --learning_rate_policy 3e-4 \
-  --learning_rate_reconstructor 1e-4 \
-  --reward_type information_theoretic
-```
+## Complete Example Workflows
 
-**What this creates:**
-- `results/joint_training/best_model.pt` (trained agent)
-- `results/joint_training/training_config.json` (training configuration)
-- Training logs and checkpoints
-
-### Step 4: Evaluate Performance
-
-**Option A: Comprehensive evaluation with config**
-```bash
-python eval/eval_main.py --config configs/evaluation.json
-```
-
-**Option B: Custom evaluation**
-```bash
-python eval/eval_main.py \
-  --model_path results/joint_training/best_model.pt \
-  --data_path data/processed/test_data.json \
-  --reconstructor_path models/reconstructor/fine-tuned \
-  --output_dir eval/results \
-  --num_sequences 1000 \
-  --include_baselines true
-```
-
-**Option C: Just run baselines for comparison**
-```bash
-python eval/baselines_main.py \
-  --data_path data/processed/test_data.json \
-  --output_dir eval/baseline_results \
-  --baselines random frequency length position
-```
-
-**What this creates:**
-- `eval/results/model_results.json` (trained model performance)
-- `eval/results/baseline_results.json` (baseline comparison)
-- `eval/results/evaluation_config.json` (evaluation settings)
-
-## Complete Example Workflow
-
-Here's the exact sequence of commands for a complete run:
+### Development Workflow (Fast Testing)
 
 ```bash
 # 1. Test installation
 python tests/test_system.py
 
-# 2. Prepare data  
-python data/prepare_main.py --config configs/data_prep.json
+# 2. Create small dataset for development
+python scripts/prepare_data.py --config configs/dev/sample_data.json
 
-# 3. Quick test to make sure training works
-python rl/train.py --config configs/quick_test.json
+# 3. Ultra-fast debug training (1 epoch)
+python scripts/train_rl.py --config configs/dev/debug.json
 
-# 4. Full training (this takes time)
-python rl/train.py --config configs/full_training.json
+# 4. Quick evaluation
+python scripts/run_evaluation.py --config configs/dev/quick_eval.json
 
-# 5. Evaluate everything
-python eval/eval_main.py --config configs/evaluation.json
+# 5. Check results
+ls debug/
+```
 
-# 6. Check results
+### Production Workflow (Research Results)
+
+```bash
+# 1. Test installation
+python tests/test_system.py
+
+# 2. Prepare full dataset (50,000 sequences)
+python scripts/prepare_data.py --config configs/prod/data_prep.json
+
+# 3. Full training (100 epochs - this takes time)
+python scripts/train_rl.py --config configs/prod/full_training.json
+
+# 4. Comprehensive evaluation (5,000 sequences)
+python scripts/run_evaluation.py --config configs/prod/evaluation.json
+
+# 5. Check results
 ls eval/results/
 cat eval/results/baseline_results.json
+```
+
+### Quick Validation Workflow
+
+```bash
+# Test that everything works before long runs
+python tests/test_system.py
+python scripts/prepare_data.py --config configs/dev/sample_data.json
+python scripts/train_rl.py --config configs/dev/quick_test.json
+python scripts/run_evaluation.py --config configs/dev/quick_eval.json
 ```
 
 ## Configuration Override Examples
@@ -192,13 +216,13 @@ You can override any config parameter:
 
 ```bash
 # Use config but change batch size
-python rl/train.py --config configs/full_training.json --batch_size 32
+python scripts/train_rl.py --config configs/prod/full_training.json --batch_size 32
 
 # Use config but change device and epochs
-python rl/train.py --config configs/full_training.json --device cpu --max_epochs 10
+python scripts/train_rl.py --config configs/prod/full_training.json --device cpu --max_epochs 10
 
 # Use config but change multiple parameters
-python eval/eval_main.py --config configs/evaluation.json \
+python scripts/run_evaluation.py --config configs/prod/evaluation.json \
   --num_sequences 500 \
   --baselines random frequency \
   --device cpu
@@ -217,20 +241,20 @@ After training, you should see:
 **Training not converging:**
 ```bash
 # Try simpler reward function
-python rl/train.py --config configs/full_training.json --reward_type simple
+python scripts/train_rl.py --config configs/prod/full_training.json --reward_type simple
 
 # Reduce learning rates
-python rl/train.py --config configs/full_training.json \
+python scripts/train_rl.py --config configs/prod/full_training.json \
   --learning_rate_policy 1e-4 --learning_rate_reconstructor 5e-5
 ```
 
 **Out of memory:**
 ```bash
 # Reduce batch size
-python rl/train.py --config configs/full_training.json --batch_size 4
+python scripts/train_rl.py --config configs/prod/full_training.json --batch_size 4
 
 # Use CPU
-python rl/train.py --config configs/full_training.json --device cpu
+python scripts/train_rl.py --config configs/prod/full_training.json --device cpu
 ```
 
 **Can't beat baselines:**
