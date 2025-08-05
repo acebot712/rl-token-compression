@@ -32,25 +32,25 @@
     },
     "efficiency_metrics": {
       "ratio_0.3": {
-        "mean_time": 0.06603307723999023,
-        "std_time": 0.015589498341315842,
-        "mean_memory": 1.484375,
-        "std_memory": 1.2171062633352931,
-        "throughput": 151.43925465802627
+        "mean_time": 0.0526641845703125,
+        "std_time": 0.0013908640863888539,
+        "mean_memory": 0.80625,
+        "std_memory": 0.7918407155167004,
+        "throughput": 189.88236657588226
       },
       "ratio_0.5": {
-        "mean_time": 0.05421156883239746,
-        "std_time": 0.005414169268248701,
-        "mean_memory": 0.0875,
-        "std_memory": 0.1364304997058942,
-        "throughput": 184.46247204017246
+        "mean_time": 0.054331064224243164,
+        "std_time": 0.005232630753598708,
+        "mean_memory": 0.253125,
+        "std_memory": 0.2925507434617112,
+        "throughput": 184.05676647021912
       },
       "ratio_0.7": {
-        "mean_time": 0.05313372611999512,
-        "std_time": 0.001540574247274654,
-        "mean_memory": 0.30625,
-        "std_memory": 0.38140365755980893,
-        "throughput": 188.2043803481125
+        "mean_time": 0.052195262908935544,
+        "std_time": 0.0005094485307710739,
+        "mean_memory": 0.0,
+        "std_memory": 0.0,
+        "throughput": 191.58826764503286
       }
     },
     "compression_ratios": {

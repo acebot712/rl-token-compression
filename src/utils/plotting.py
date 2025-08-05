@@ -70,7 +70,7 @@ def save_plot(fig, output_dir: str, filename: str, formats: List[str] = None):
         formats: List of formats to save ['png', 'pdf', 'svg']
     """
     if formats is None:
-        formats = ['png', 'pdf']
+        formats = ['png']
     
     os.makedirs(output_dir, exist_ok=True)
     
