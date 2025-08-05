@@ -39,7 +39,10 @@ def train(config):
         'device': config['device'],
         'log_freq': config.get('log_freq', 100),
         'eval_freq': config.get('eval_freq', 500),
-        'checkpoint_freq': config.get('checkpoint_freq', 1000)
+        'checkpoint_freq': config.get('checkpoint_freq', 1000),
+        # Memory optimization parameters
+        'gradient_accumulation_steps': config.get('gradient_accumulation_steps', 1),
+        'micro_batch_size': config.get('micro_batch_size', None)
     }
     
     # Create joint trainer

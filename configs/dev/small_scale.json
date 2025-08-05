@@ -1,0 +1,20 @@
+{
+  "data_path": "debug/data/processed_data.json",
+  "output_dir": "debug/small_scale",
+  "reconstructor_path": "models/reconstructor/fine-tuned/checkpoint-5000",
+  "val_data_path": "debug/data/val_data.json",
+  "max_epochs": 5,
+  "max_steps_per_epoch": 50,
+  "batch_size": 8,
+  "learning_rate_policy": 8e-4,
+  "learning_rate_reconstructor": 4e-4,
+  "context_window": 4,
+  "reward_type": "simple",
+  "device": "auto",
+  "log_freq": 10,
+  "eval_freq": 100,
+  "checkpoint_freq": 100,
+  "gradient_accumulation_steps": 2,
+  "micro_batch_size": 4,
+  "comment": "Small-scale research config with memory efficiency - works on 8GB+ systems, effective batch_size=8 with 2x4 gradient accumulation"
+}

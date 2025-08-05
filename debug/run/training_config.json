@@ -14,5 +14,7 @@
   "log_freq": 5,
   "eval_freq": 20,
   "checkpoint_freq": 20,
-  "comment": "Ultra-fast debug config - only 10 steps per epoch for quick testing"
+  "gradient_accumulation_steps": 1,
+  "micro_batch_size": 4,
+  "comment": "Ultra-fast debug config with memory optimizations - works on 4GB+ systems"
 }
