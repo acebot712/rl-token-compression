@@ -1,0 +1,9 @@
+{
+  "data_path": "data/processed/test_data.json",
+  "output_dir": "eval/baseline_results",
+  "num_sequences": 1000,
+  "baselines": ["random", "frequency", "length", "position", "entropy"],
+  "compression_targets": [0.3, 0.5, 0.7],
+  "random_seed": 42,
+  "comment": "Configuration for running baseline compression methods"
+}

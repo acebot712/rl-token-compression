@@ -1,0 +1,14 @@
+{
+  "data_path": "data/processed/processed_data.json",
+  "output_dir": "results/ablation",
+  "reconstructor_path": "models/reconstructor/fine-tuned/checkpoint-5000",
+  "val_data_path": "data/processed/val_data.json",
+  "max_epochs": 20,
+  "batch_size": 8,
+  "learning_rate_policy": 1e-4,
+  "learning_rate_reconstructor": 5e-5,
+  "context_window": 3,
+  "reward_type": "information_theoretic",
+  "device": "auto",
+  "comment": "Conservative settings for ablation studies - smaller batch size, lower learning rates"
+}

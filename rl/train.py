@@ -1,192 +1,77 @@
 import os
+import sys
+# Add project root to Python path
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 import torch
-from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import DummyVecEnv
-from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
 from transformers import GPT2Tokenizer, GPT2LMHeadModel
 
-from rl.env import TokenCompressionEnv
-from models.agent.policy import TokenCompressionPolicy
+from training.joint_trainer import create_joint_trainer, TrainingConfig
+from utils.config import setup_config, save_config, resolve_device
+from utils.common import setup_output_dir, print_section_header, print_config_summary, handle_common_errors
 
 
-def train(
-    data_path: str,
-    output_dir: str,
-    reconstructor_path: str,
-    num_timesteps: int = 1_000_000,
-    batch_size: int = 64,
-    learning_rate: float = 3e-4,
-    n_steps: int = 2048,
-    gamma: float = 0.99,
-    device: str = "cuda" if torch.cuda.is_available() else "cpu"
-):
-    """
-    Train the token compression agent using PPO.
+@handle_common_errors
+def train(config):
+    """Train the token compression system using joint training."""
+    print_section_header("RL TOKEN COMPRESSION - JOINT TRAINING")
+    print_config_summary(config)
+    print()
     
-    Args:
-        data_path: Path to training data
-        output_dir: Directory to save checkpoints and logs
-        reconstructor_path: Path to fine-tuned reconstructor model
-        num_timesteps: Number of training timesteps
-        batch_size: Training batch size
-        learning_rate: Learning rate for PPO
-        n_steps: Number of steps to run for each environment per update
-        gamma: Discount factor
-        device: Device to run training on
-    """
-    # Create output directory
-    os.makedirs(output_dir, exist_ok=True)
+    # Resolve device
+    config['device'] = resolve_device(config['device'])
+    print(f"Using device: {config['device']}")
     
-    # Initialize tokenizer and reconstructor
-    print("Loading tokenizer and reconstructor...")
-    tokenizer = GPT2Tokenizer.from_pretrained(
-        reconstructor_path if os.path.exists(reconstructor_path) else "gpt2"
-    )
-    reconstructor = GPT2LMHeadModel.from_pretrained(
-        reconstructor_path if os.path.exists(reconstructor_path) else "gpt2"
-    ).to(device)
-
-    embedding_size = reconstructor.transformer.wte.weight.shape[1]
+    # Setup output directory
+    setup_output_dir(config['output_dir'])
     
-    print(f"Using reconstructor from: {reconstructor_path}")
-    print("Reconstructor model loaded successfully")
+    # Create training configuration dict for joint trainer
+    config_dict = {
+        'batch_size': config['batch_size'],
+        'learning_rate_policy': config['learning_rate_policy'],
+        'learning_rate_reconstructor': config['learning_rate_reconstructor'],
+        'max_epochs': config['max_epochs'],
+        'context_window': config['context_window'],
+        'reward_type': config['reward_type'],
+        'device': config['device']
+    }
     
-    # Create environment
-    print("Creating environment...")
-    context_window = 32
-    env = TokenCompressionEnv(
-        tokenizer=tokenizer,
-        reconstructor=reconstructor,
-        data_path=data_path,
-        max_seq_length=1024,
-        context_window=context_window,
-        device=device
-    )
-    env = DummyVecEnv([lambda: env])
-    
-    # Initialize policy
-    policy_kwargs = dict(
-        features_extractor_class=TokenCompressionPolicy,
-        features_extractor_kwargs=dict(
-            input_dim=embedding_size + context_window,
-            hidden_dim=256,
-            num_layers=3,
-            dropout=0.1
-        )
+    # Create joint trainer
+    trainer = create_joint_trainer(
+        config_dict=config_dict,
+        data_path=config['data_path'],
+        reconstructor_path=config['reconstructor_path'],
+        val_data_path=config.get('val_data_path')
     )
     
-    # Initialize PPO agent
-    print("Initializing PPO agent...")
-    model = PPO(
-        "MlpPolicy",
-        env,
-        policy_kwargs=policy_kwargs,
-        batch_size=batch_size,
-        learning_rate=learning_rate,
-        n_steps=n_steps,
-        gamma=gamma,
-        verbose=1,
-        tensorboard_log=os.path.join(output_dir, "tb_logs")
-    )
+    print("Starting joint training...")
     
-    # Set up callbacks
-    checkpoint_callback = CheckpointCallback(
-        save_freq=10000,
-        save_path=os.path.join(output_dir, "checkpoints"),
-        name_prefix="rl_model"
-    )
+    # Train the system
+    trainer.train(config['output_dir'])
     
-    eval_callback = EvalCallback(
-        env,
-        best_model_save_path=os.path.join(output_dir, "best_model"),
-        log_path=os.path.join(output_dir, "eval_logs"),
-        eval_freq=10000,
-        deterministic=True,
-        render=False
-    )
+    print(f"Joint training complete. Models saved to {config['output_dir']}")
     
-    # Train the agent
-    print(f"Starting training for {num_timesteps} timesteps...")
-    model.learn(
-        total_timesteps=num_timesteps,
-        callback=[checkpoint_callback, eval_callback]
-    )
-    
-    # Save final model
-    final_model_path = os.path.join(output_dir, "final_model")
-    model.save(final_model_path)
-    print(f"Training complete. Final model saved to {final_model_path}")
+    # Save configuration for reproducibility
+    config_path = os.path.join(config['output_dir'], "training_config.json")
+    save_config(config, config_path)
 
 
 if __name__ == "__main__":
-    import argparse
+    default_config = {
+        "data_path": "data/processed/processed_data.json",
+        "output_dir": "results/joint_training",
+        "reconstructor_path": "models/reconstructor/fine-tuned/checkpoint-5000",
+        "val_data_path": None,
+        "max_epochs": 50,
+        "batch_size": 16,
+        "learning_rate_policy": 3e-4,
+        "learning_rate_reconstructor": 1e-4,
+        "context_window": 5,
+        "reward_type": "simple",
+        "device": "auto"
+    }
     
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--data_path",
-        type=str,
-        required=True,
-        help="Path to training data"
-    )
-    parser.add_argument(
-        "--output_dir",
-        type=str,
-        required=True,
-        help="Directory to save checkpoints and logs"
-    )
-    parser.add_argument(
-        "--reconstructor_path",
-        type=str,
-        required=True,
-        help="Path to fine-tuned reconstructor model"
-    )
-    parser.add_argument(
-        "--num_timesteps",
-        type=int,
-        default=1_000_000,
-        help="Number of training timesteps"
-    )
-    parser.add_argument(
-        "--batch_size",
-        type=int,
-        default=64,
-        help="Training batch size"
-    )
-    parser.add_argument(
-        "--learning_rate",
-        type=float,
-        default=3e-4,
-        help="Learning rate for PPO"
-    )
-    parser.add_argument(
-        "--n_steps",
-        type=int,
-        default=2048,
-        help="Number of steps per update"
-    )
-    parser.add_argument(
-        "--gamma",
-        type=float,
-        default=0.99,
-        help="Discount factor"
-    )
-    parser.add_argument(
-        "--device",
-        type=str,
-        default=None,
-        help="Device to run training on"
-    )
-    
-    args = parser.parse_args()
-    
-    train(
-        data_path=args.data_path,
-        output_dir=args.output_dir,
-        reconstructor_path=args.reconstructor_path,
-        num_timesteps=args.num_timesteps,
-        batch_size=args.batch_size,
-        learning_rate=args.learning_rate,
-        n_steps=args.n_steps,
-        gamma=args.gamma,
-        device=args.device or ("cuda" if torch.cuda.is_available() else "cpu")
-    ) 
+    config = setup_config(default_config, "RL Token Compression Training")
+    train(config)

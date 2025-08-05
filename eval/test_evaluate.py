@@ -5,9 +5,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from transformers import GPT2Tokenizer, GPT2LMHeadModel
 
-# Import local modules with proper path handling
-import sys
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../')))
 from eval.evaluate import calculate_perplexity
 
 
@@ -49,8 +46,6 @@ def create_mock_data():
         # Run the data preparation script
         print("Test data not found, running data preparation...")
         
-        # Use relative import with proper path handling
-        sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../')))
         from data.test_prepare import prepare_test_data
         prepare_test_data("data/test")
     

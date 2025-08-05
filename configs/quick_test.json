@@ -1,0 +1,12 @@
+{
+  "data_path": "sample_data.json",
+  "output_dir": "results/quick_test",
+  "reconstructor_path": "gpt2",
+  "max_epochs": 2,
+  "batch_size": 4,
+  "learning_rate_policy": 3e-4,
+  "learning_rate_reconstructor": 1e-4,
+  "context_window": 3,
+  "reward_type": "simple",
+  "device": "auto"
+}
