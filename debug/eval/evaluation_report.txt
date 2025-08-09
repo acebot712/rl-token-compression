@@ -11,9 +11,9 @@ Quality Metrics:
   0.7: 1.000 ± 0.000
 
 Efficiency Metrics:
-  ratio_0.3 - Time: 0.053s, Throughput: 190.4 seq/s
-  ratio_0.5 - Time: 0.055s, Throughput: 181.8 seq/s
-  ratio_0.7 - Time: 0.054s, Throughput: 185.4 seq/s
+  ratio_0.3 - Time: 0.060s, Throughput: 166.5 seq/s
+  ratio_0.5 - Time: 0.061s, Throughput: 165.2 seq/s
+  ratio_0.7 - Time: 0.060s, Throughput: 165.9 seq/s
 
 Baseline Comparisons:
 (Significant differences marked with ***)

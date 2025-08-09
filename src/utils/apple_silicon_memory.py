@@ -89,8 +89,8 @@ class UnifiedMemoryManager:
             # Remove artificial memory fraction limits that don't apply to unified memory
             
             # Set environment variables for optimal MPS performance
-            os.environ['PYTORCH_MPS_HIGH_WATERMARK_RATIO'] = '1.0'  # Use full unified memory
-            os.environ['PYTORCH_MPS_LOW_WATERMARK_RATIO'] = '0.7'   # Start cleanup at 70%
+            os.environ['PYTORCH_MPS_HIGH_WATERMARK_RATIO'] = '0.8'  # Use 80% of unified memory for stability
+            os.environ['PYTORCH_MPS_LOW_WATERMARK_RATIO'] = '0.6'   # Start cleanup at 60%
             
             # Enable MPS optimizations
             if hasattr(torch.backends.mps, 'is_built'):
@@ -313,8 +313,8 @@ class MPSOptimizedTraining:
 def setup_apple_silicon_optimizations():
     """Setup global optimizations for Apple Silicon."""
     # Optimize for unified memory and Metal Performance Shaders
-    os.environ['PYTORCH_MPS_HIGH_WATERMARK_RATIO'] = '1.0'
-    os.environ['PYTORCH_MPS_LOW_WATERMARK_RATIO'] = '0.7'
+    os.environ['PYTORCH_MPS_HIGH_WATERMARK_RATIO'] = '0.8'
+    os.environ['PYTORCH_MPS_LOW_WATERMARK_RATIO'] = '0.6'
     
     # Optimize threading for Apple Silicon
     os.environ['OMP_NUM_THREADS'] = '8'  # M4 Pro has 8 performance cores
@@ -328,5 +328,6 @@ def setup_apple_silicon_optimizations():
     
     logger.info("Apple Silicon optimizations configured")
     logger.info("  Unified memory optimizations: enabled")
-    logger.info("  MPS high watermark: 100% (unified memory)")
+    logger.info("  MPS high watermark: 80% (unified memory)")
+    logger.info("  MPS low watermark: 60% (cleanup threshold)")
     logger.info("  Threading optimized for M4 Pro (8 performance cores)")

@@ -1,5 +1,8 @@
 import os
 import sys
+
+# MPS memory configuration is handled by Apple Silicon memory manager
+
 # Add project root to Python path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
@@ -27,6 +30,24 @@ def train(config):
     # Setup output directory
     setup_output_dir(config['output_dir'])
     
+    # Check for existing checkpoints if resume is enabled
+    resume_from = None
+    if config.get('resume', False):
+        # Look for the latest checkpoint
+        checkpoint_files = []
+        if os.path.exists(config['output_dir']):
+            for file in os.listdir(config['output_dir']):
+                if file.startswith('checkpoint_step_') and file.endswith('.pt'):
+                    checkpoint_files.append(file)
+        
+        if checkpoint_files:
+            # Sort by step number and get the latest
+            checkpoint_files.sort(key=lambda x: int(x.split('_')[-1].split('.')[0]))
+            resume_from = os.path.join(config['output_dir'], checkpoint_files[-1])
+            print(f"Found checkpoint to resume from: {resume_from}")
+        else:
+            print("No checkpoint found, starting fresh training")
+    
     # Create training configuration dict for joint trainer
     config_dict = {
         'batch_size': config['batch_size'],
@@ -50,7 +71,9 @@ def train(config):
         config_dict=config_dict,
         data_path=config['data_path'],
         reconstructor_path=config['reconstructor_path'],
-        val_data_path=config.get('val_data_path')
+        val_data_path=config.get('val_data_path'),
+        checkpoint_dir=config['output_dir'],
+        resume_from=resume_from
     )
     
     print("Starting joint training...")
@@ -77,7 +100,9 @@ if __name__ == "__main__":
         "learning_rate_reconstructor": 1e-4,
         "context_window": 5,
         "reward_type": "simple",
-        "device": "auto"
+        "device": "auto",
+        "resume": False,
+        "debug": False
     }
     
     config = setup_config(default_config, "RL Token Compression Training")

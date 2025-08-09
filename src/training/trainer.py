@@ -32,7 +32,10 @@ from src.models.agent import SimpleCompressionPolicy
 from src.training.rewards import create_reward_function
 
 # Import monitoring systems
-from src.utils.logging import get_logger, get_metrics_logger, TrainingContextManager
+from src.utils.logging import (
+    get_logger, get_metrics_logger, TrainingContextManager,
+    save_crash_dump, get_tensor_diagnostics, get_memory_diagnostics
+)
 from src.utils.metrics import record_training_metrics, record_gradient_health
 from src.utils.checkpoints import CheckpointManager
 from src.utils.apple_silicon_memory import UnifiedMemoryManager, MPSOptimizedTraining, setup_apple_silicon_optimizations
@@ -80,6 +83,9 @@ class TrainingConfig:
     
     # Device
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    
+    # Debug mode
+    debug: bool = False
 
 
 class GumbelSoftmax:
@@ -224,6 +230,45 @@ class JointTrainer:
         logger.info(f"Joint trainer initialized successfully - Policy: {policy_params:,} params, "
                    f"Reconstructor: {reconstructor_params:,} params, Train: {len(train_data)} seqs, "
                    f"Val: {val_seqs} seqs, Device: {config.device}, Batch: {config.batch_size}")
+    
+    def load_checkpoint(self, checkpoint_path: str) -> bool:
+        """Load training checkpoint to resume training.
+        
+        Args:
+            checkpoint_path: Path to checkpoint file
+            
+        Returns:
+            True if checkpoint loaded successfully, False otherwise
+        """
+        try:
+            if not os.path.exists(checkpoint_path):
+                logger.warning(f"Checkpoint not found: {checkpoint_path}")
+                return False
+            
+            logger.info(f"Loading checkpoint from: {checkpoint_path}")
+            checkpoint = torch.load(checkpoint_path, map_location=self.config.device)
+            
+            # Restore model states
+            self.policy.load_state_dict(checkpoint['policy_state_dict'])
+            self.reconstructor.load_state_dict(checkpoint['reconstructor_state_dict'])
+            
+            # Restore optimizer states
+            self.policy_optimizer.load_state_dict(checkpoint['policy_optimizer_state_dict'])
+            self.reconstructor_optimizer.load_state_dict(checkpoint['reconstructor_optimizer_state_dict'])
+            
+            # Restore training state
+            self.step = checkpoint.get('step', 0)
+            self.epoch = checkpoint.get('epoch', 0)
+            self.best_val_score = checkpoint.get('best_val_score', float('inf'))
+            self.nan_count = checkpoint.get('nan_count', 0)
+            self.inf_count = checkpoint.get('inf_count', 0)
+            
+            logger.info(f"Checkpoint loaded successfully - Resuming from Step {self.step}, Epoch {self.epoch}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to load checkpoint: {str(e)}", exc_info=True)
+            return False
     
     def get_gumbel_temperature(self) -> float:
         """Get current Gumbel temperature based on training progress."""
@@ -415,17 +460,34 @@ class JointTrainer:
         
         return gradient_info
     
-    def joint_training_step(self, batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
+    def joint_training_step(self, batch: Dict[str, torch.Tensor], batch_indices: Optional[list] = None) -> Dict[str, float]:
         """Perform one joint training step with comprehensive monitoring."""
         import time
         step_start_time = time.time()
+        
+        # Debug logging for tensor shapes
+        if self.config.debug:
+            logger.debug(f"Step {self.step} batch shapes: " +
+                        ", ".join([f"{k}: {v.shape}" for k, v in batch.items() if hasattr(v, 'shape')]))
+        
+        # Store references for crash dump
+        masked_logits, mask_decisions, losses = None, None, None
         
         try:
             # Compute decisions
             masked_logits, mask_decisions = self.compute_policy_decisions(batch)
             
+            if self.config.debug:
+                logger.debug(f"Step {self.step} - Policy decisions computed: "
+                           f"masked_logits {masked_logits.shape}, mask_decisions {mask_decisions.shape}")
+            
             # Compute losses
             losses = self.compute_losses(batch, masked_logits, mask_decisions)
+            
+            if self.config.debug:
+                logger.debug(f"Step {self.step} - Losses computed: "
+                           f"policy_loss {losses['policy_loss'].item():.4f}, "
+                           f"reconstructor_loss {losses['reconstructor_loss'].item():.4f}")
             
             # Update networks and get gradient info
             gradient_info = self.update_networks(losses)
@@ -451,13 +513,80 @@ class JointTrainer:
             # Log step completion
             step_duration = time.time() - step_start_time
             
-            # APPLE SILICON OPTIMIZATION: Cleanup unified memory after each step
-            self.memory_manager.cleanup_unified_memory()
+            # MEMORY FIX: Explicit cleanup of intermediate tensors
+            del masked_logits, mask_decisions
+            del losses, reward_results
+            if 'embeddings' in batch:
+                del batch['embeddings']
+            del batch
+            
+            # APPLE SILICON OPTIMIZATION: More aggressive cleanup for MPS
+            if self.config.device == 'mps':
+                # Force MPS synchronization before cleanup
+                if hasattr(torch.mps, 'synchronize'):
+                    torch.mps.synchronize()
+                # Aggressive memory cleanup
+                self.memory_manager.cleanup_unified_memory(aggressive=True)
+                # Check memory pressure and log warning if high
+                if self.memory_manager.check_memory_pressure(threshold_percent=80):
+                    memory_info = self.memory_manager.get_unified_memory_info()
+                    logger.warning(f"High memory pressure at step {self.step}: "
+                                 f"{memory_info['memory_pressure_percent']:.1f}%")
+            else:
+                # Standard cleanup for other devices
+                self.memory_manager.cleanup_unified_memory()
             
             return step_metrics
             
         except Exception as e:
-            logger.error(f"Training step failed - Step {self.step} (Epoch {self.epoch}): {str(e)}")
+            # COMPREHENSIVE CRASH DIAGNOSTICS - This is where Linus-style debugging kicks in
+            logger.error(f"💀 TRAINING STEP CRASHED - Step {self.step}, Epoch {self.epoch}")
+            logger.error(f"Exception: {type(e).__name__}: {str(e)}")
+            
+            # Get memory state at crash
+            memory_diag = get_memory_diagnostics()
+            logger.error(f"Memory at crash: {memory_diag['system_memory_percent']:.1f}% system, "
+                        f"{memory_diag['process_memory_rss_gb']:.2f}GB process")
+            
+            # Collect all tensors for crash dump
+            crash_tensors = {}
+            if masked_logits is not None:
+                crash_tensors['masked_logits'] = masked_logits
+            if mask_decisions is not None:
+                crash_tensors['mask_decisions'] = mask_decisions
+            if losses is not None:
+                for k, v in losses.items():
+                    if hasattr(v, 'shape'):
+                        crash_tensors[f'losses_{k}'] = v
+            
+            # Add batch tensors
+            for k, v in batch.items():
+                if hasattr(v, 'shape'):
+                    crash_tensors[f'batch_{k}'] = v
+            
+            # Save comprehensive crash dump
+            output_dir = getattr(self.config, 'output_dir', '.') if hasattr(self.config, 'output_dir') else '.'
+            crash_dump_path = save_crash_dump(
+                step=self.step,
+                epoch=self.epoch,
+                batch_indices=batch_indices,
+                tensors=crash_tensors,
+                exception=e,
+                output_dir=os.path.join(output_dir, 'crash_dumps')
+            )
+            
+            # Log specific error context
+            logger.error(f"Batch indices that caused crash: {batch_indices}")
+            logger.error(f"Last successful step: {self.step - 1}")
+            
+            # Try to save emergency checkpoint
+            try:
+                emergency_path = f"emergency_checkpoint_step_{self.step}.pt"
+                self.save_checkpoint(output_dir, final=False)
+                logger.error(f"Emergency checkpoint saved: {emergency_path}")
+            except Exception as checkpoint_e:
+                logger.error(f"Failed to save emergency checkpoint: {checkpoint_e}")
+            
             # Cleanup unified memory even on failure
             self.memory_manager.cleanup_unified_memory()
             raise
@@ -538,6 +667,21 @@ class JointTrainer:
                     'reconstructor_grad_norm': gradient_info['reconstructor_grad_norm']
                 }
                 
+                # MEMORY FIX: Clear intermediate tensors after extracting metrics
+                del masked_logits, mask_decisions
+                del losses, reward_results
+                if 'embeddings' in micro_batch:
+                    del micro_batch['embeddings']
+                del micro_batch
+                
+                # MPS-specific: Force synchronization between micro-batches
+                if self.config.device == 'mps' and not is_last_accumulation:
+                    if hasattr(torch.mps, 'synchronize'):
+                        torch.mps.synchronize()
+                    # Light cleanup between micro-batches
+                    if hasattr(torch.mps, 'empty_cache'):
+                        torch.mps.empty_cache()
+                
                 # Accumulate metrics
                 for key, value in step_metrics.items():
                     if key not in accumulated_metrics:
@@ -571,13 +715,56 @@ class JointTrainer:
                         f"Micro-batches: {accumulation_steps}, "
                         f"Effective batch size: {effective_batch_size}")
             
-            # APPLE SILICON OPTIMIZATION: Cleanup after gradient accumulation step
-            self.memory_manager.cleanup_unified_memory()
+            # APPLE SILICON OPTIMIZATION: Aggressive cleanup after gradient accumulation
+            if self.config.device == 'mps':
+                # Force MPS synchronization
+                if hasattr(torch.mps, 'synchronize'):
+                    torch.mps.synchronize()
+                # Aggressive cleanup for MPS
+                self.memory_manager.cleanup_unified_memory(aggressive=True)
+                # Check and warn about memory pressure
+                if self.memory_manager.check_memory_pressure(threshold_percent=75):
+                    memory_info = self.memory_manager.get_unified_memory_info()
+                    logger.warning(f"Memory pressure after step {self.step}: "
+                                 f"{memory_info['memory_pressure_percent']:.1f}% - "
+                                 f"Consider reducing batch size or increasing gradient accumulation")
+                    # Suggest better parameters if pressure is too high
+                    if memory_info['memory_pressure_percent'] > 85:
+                        micro_batch, accum = self.memory_manager.suggest_gradient_accumulation(effective_batch_size)
+                        logger.info(f"Suggested: micro_batch_size={micro_batch}, accumulation_steps={accum}")
+            else:
+                self.memory_manager.cleanup_unified_memory()
             
             return final_metrics
             
         except Exception as e:
-            logger.error(f"Gradient accumulation training step failed - Step {self.step} (Epoch {self.epoch}): {str(e)}")
+            # GRADIENT ACCUMULATION CRASH DIAGNOSTICS
+            logger.error(f"💀 GRADIENT ACCUMULATION STEP CRASHED - Step {self.step}, Epoch {self.epoch}")
+            logger.error(f"Exception: {type(e).__name__}: {str(e)}")
+            
+            # Memory state at crash
+            memory_diag = get_memory_diagnostics()
+            logger.error(f"Memory: {memory_diag['system_memory_percent']:.1f}% system, "
+                        f"{memory_diag['process_memory_rss_gb']:.2f}GB process")
+            
+            # Gradient accumulation specific info
+            logger.error(f"Gradient accumulation config: {accumulation_steps} steps, "
+                        f"micro_batch_size={micro_batch_size}, effective_batch_size={effective_batch_size}")
+            
+            # Save crash dump
+            crash_dump_path = save_crash_dump(
+                step=self.step,
+                epoch=self.epoch,
+                batch_indices=list(range(len(batch_data))),
+                tensors={},
+                exception=e,
+                output_dir=os.path.join(
+                    getattr(self.config, 'output_dir', '.') if hasattr(self.config, 'output_dir') else '.', 
+                    'crash_dumps'
+                )
+            )
+            logger.error(f"Crash dump saved: {crash_dump_path}")
+            
             # Cleanup unified memory even on failure
             self.memory_manager.cleanup_unified_memory()
             raise
@@ -632,7 +819,7 @@ class JointTrainer:
                 batch = self.prepare_batch(batch_data)
                 
                 # Compute metrics without updating parameters
-                metrics = self.joint_training_step(batch)
+                metrics = self.joint_training_step(batch, batch_indices=None)
                 
                 for key in total_metrics:
                     val_key = key.replace('val_', '')
@@ -673,11 +860,9 @@ class JointTrainer:
                 success = self.checkpoint_manager.save_checkpoint(checkpoint, checkpoint_name, is_best)
                 
                 if success:
-                    logger.model_checkpoint(
-                        checkpoint_path=str(self.checkpoint_manager.active_dir / f"{checkpoint_name}.pt"),
-                        metrics={'step': self.step, 'epoch': self.epoch, 'best_val_score': self.best_val_score},
-                        is_best=is_best, is_final=final
-                    )
+                    checkpoint_type = "(FINAL)" if final else "(BEST)" if is_best else ""
+                    logger.info(f"Checkpoint saved {checkpoint_type} - Step {self.step}, Epoch {self.epoch}, "
+                              f"Best val score: {self.best_val_score:.4f}")
                 else:
                     logger.error(f"Checkpoint save failed - Step {self.step} (Epoch {self.epoch})")
                 
@@ -719,7 +904,9 @@ class JointTrainer:
     def _run_training_loop(self, output_dir: str) -> None:
         """Internal training loop implementation."""
         try:
-            for epoch in range(self.config.max_epochs):
+            # Start from the current epoch if resuming
+            start_epoch = self.epoch
+            for epoch in range(start_epoch, self.config.max_epochs):
                 self.epoch = epoch
                 epoch_metrics = []
                 
@@ -728,10 +915,26 @@ class JointTrainer:
                 
                 # Training loop
                 for step in range(self.config.max_steps_per_epoch):
-                    # Sample batch
+                    # MEMORY FIX: Adaptive batch sizing based on memory pressure
+                    current_batch_size = self.config.batch_size
+                    if self.config.device == 'mps':
+                        # Check memory pressure and adapt batch size
+                        if self.memory_manager.check_memory_pressure(threshold_percent=70):
+                            # High memory pressure, use smaller batch
+                            memory_info = self.memory_manager.get_unified_memory_info()
+                            if memory_info['memory_pressure_percent'] > 85:
+                                current_batch_size = max(self.config.batch_size // 4, 2)
+                                logger.warning(f"Critical memory pressure ({memory_info['memory_pressure_percent']:.1f}%), "
+                                             f"reducing batch size to {current_batch_size}")
+                            elif memory_info['memory_pressure_percent'] > 75:
+                                current_batch_size = max(self.config.batch_size // 2, 4)
+                                logger.info(f"High memory pressure ({memory_info['memory_pressure_percent']:.1f}%), "
+                                          f"reducing batch size to {current_batch_size}")
+                    
+                    # Sample batch with adaptive size
                     batch_indices = np.random.choice(
                         len(self.train_data),
-                        size=self.config.batch_size,
+                        size=current_batch_size,
                         replace=False
                     )
                     batch_data = [self.train_data[i] for i in batch_indices]
@@ -743,7 +946,7 @@ class JointTrainer:
                     else:
                         # Use regular training step
                         batch = self.prepare_batch(batch_data)
-                        metrics = self.joint_training_step(batch)
+                        metrics = self.joint_training_step(batch, batch_indices)
                     
                     epoch_metrics.append(metrics)
                     
@@ -805,10 +1008,63 @@ class JointTrainer:
             self.save_checkpoint(output_dir, final=False)
             raise
         except Exception as e:
+            # COMPREHENSIVE TRAINING LOOP CRASH DIAGNOSTICS 
+            logger.error("💥 TRAINING LOOP CRASHED - COMPREHENSIVE DIAGNOSTICS")
+            logger.error("="*80)
+            logger.error(f"Step: {self.step}, Epoch: {self.epoch}/{self.config.max_epochs}")
+            logger.error(f"Exception: {type(e).__name__}: {str(e)}")
+            
+            # Get system state at crash
+            memory_diag = get_memory_diagnostics()
+            logger.error(f"Memory at crash:")
+            logger.error(f"  System: {memory_diag['system_memory_percent']:.1f}% used ({memory_diag['system_memory_used_gb']:.2f}GB/{memory_diag['system_memory_gb']:.2f}GB)")
+            logger.error(f"  Process: {memory_diag['process_memory_rss_gb']:.2f}GB RSS")
+            if 'cuda_allocated_gb' in memory_diag:
+                logger.error(f"  CUDA: {memory_diag['cuda_allocated_gb']:.2f}GB allocated, {memory_diag['cuda_reserved_gb']:.2f}GB reserved")
+            elif 'mps_estimated_gb' in memory_diag:
+                logger.error(f"  MPS: ~{memory_diag['mps_estimated_gb']:.2f}GB estimated")
+            
+            # Training progress info
+            epoch_progress = (self.step % self.config.max_steps_per_epoch) / self.config.max_steps_per_epoch * 100
+            total_progress = (self.epoch * self.config.max_steps_per_epoch + (self.step % self.config.max_steps_per_epoch)) / (self.config.max_epochs * self.config.max_steps_per_epoch) * 100
+            logger.error(f"Training progress: {epoch_progress:.1f}% through epoch, {total_progress:.1f}% total")
+            
+            # Gradient health summary
+            logger.error(f"Gradient health: {self.nan_count} NaN gradients, {self.inf_count} Inf gradients total")
+            
+            # Save crash dump with training context
+            crash_dump_path = save_crash_dump(
+                step=self.step,
+                epoch=self.epoch,
+                batch_indices=None,
+                tensors={},  # Main tensors would already be cleaned up
+                exception=e,
+                output_dir=os.path.join(output_dir, 'crash_dumps')
+            )
+            logger.error(f"Crash dump saved: {crash_dump_path}")
+            
+            # Try to save emergency checkpoint with detailed info
+            try:
+                emergency_name = f"emergency_crash_step_{self.step}_epoch_{self.epoch}"
+                success = self.save_checkpoint(output_dir, final=False)
+                if success:
+                    logger.error(f"💾 Emergency checkpoint saved: {output_dir}/{emergency_name}.pt")
+                    logger.error("To resume: python scripts/train_rl.py --config <config> --resume")
+                else:
+                    logger.error("❌ Emergency checkpoint save FAILED")
+            except Exception as checkpoint_e:
+                logger.error(f"❌ Emergency checkpoint save FAILED: {checkpoint_e}")
+            
+            logger.error("="*80)
+            logger.error(f"🔧 DEBUGGING INFO:")
+            logger.error(f"- Check crash dump: {crash_dump_path}")
+            logger.error(f"- Last checkpoint: {output_dir}/checkpoint_step_*.pt")
+            logger.error(f"- Config used: batch_size={self.config.batch_size}, device={self.config.device}")
+            logger.error(f"- To debug: add --debug flag for verbose logging")
+            logger.error("="*80)
+            
             logger.error(f"Training failed with exception - Step {self.step} (Epoch {self.epoch}): {str(e)}", 
                        exc_info=True)
-            # Save emergency checkpoint
-            self.save_checkpoint(output_dir, final=False)
             raise
         
         logger.info(f"Joint training completed successfully. Steps: {self.step}, "
@@ -839,9 +1095,22 @@ def create_joint_trainer(
     data_path: str,
     reconstructor_path: str,
     val_data_path: Optional[str] = None,
-    checkpoint_dir: Optional[str] = None
+    checkpoint_dir: Optional[str] = None,
+    resume_from: Optional[str] = None
 ) -> JointTrainer:
-    """Factory function to create joint trainer with monitoring."""
+    """Factory function to create joint trainer with monitoring.
+    
+    Args:
+        config_dict: Training configuration dictionary
+        data_path: Path to training data
+        reconstructor_path: Path to pre-trained reconstructor model
+        val_data_path: Optional path to validation data
+        checkpoint_dir: Optional directory for checkpoints
+        resume_from: Optional checkpoint path to resume from
+    
+    Returns:
+        JointTrainer instance, optionally loaded with checkpoint
+    """
     
     # Create config
     config = TrainingConfig(**config_dict)
@@ -850,7 +1119,7 @@ def create_joint_trainer(
     checkpoint_manager = None
     if checkpoint_dir:
         checkpoint_manager = CheckpointManager(checkpoint_dir, max_backups=5)
-        logger.info("Checkpoint manager initialized", checkpoint_dir=checkpoint_dir)
+        logger.info(f"Checkpoint manager initialized: {checkpoint_dir}")
     
     # Load tokenizer and reconstructor
     tokenizer = GPT2Tokenizer.from_pretrained(reconstructor_path)
@@ -867,6 +1136,18 @@ def create_joint_trainer(
     train_data = load_training_data(data_path, tokenizer)
     val_data = load_training_data(val_data_path, tokenizer) if val_data_path else None
     
-    return JointTrainer(config, tokenizer, reconstructor, train_data, val_data, checkpoint_manager)
+    # Create trainer
+    trainer = JointTrainer(config, tokenizer, reconstructor, train_data, val_data, checkpoint_manager)
+    
+    # Load checkpoint if resuming
+    if resume_from and os.path.exists(resume_from):
+        if trainer.load_checkpoint(resume_from):
+            logger.info(f"Resumed training from checkpoint: {resume_from}")
+        else:
+            logger.warning(f"Failed to load checkpoint, starting fresh training")
+    elif resume_from:
+        logger.warning(f"Checkpoint not found: {resume_from}, starting fresh training")
+    
+    return trainer
 
 

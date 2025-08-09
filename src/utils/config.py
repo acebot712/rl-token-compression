@@ -53,6 +53,8 @@ def setup_config(default_config: Dict[str, Any], script_name: str = "Script") ->
     parser.add_argument('--device', type=str, choices=['auto', 'cpu', 'cuda', 'mps'], help='Device')
     parser.add_argument('--output_dir', type=str, help='Output directory')
     parser.add_argument('--data_path', type=str, help='Data path')
+    parser.add_argument('--resume', action='store_true', help='Resume training from latest checkpoint')
+    parser.add_argument('--debug', action='store_true', help='Enable debug mode with verbose logging')
     
     args = parser.parse_args()
     
