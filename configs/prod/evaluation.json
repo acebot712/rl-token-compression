@@ -6,11 +6,8 @@
   "num_sequences": 5000,
   "batch_size": 64,
   "include_baselines": true,
-  "baselines": ["random", "frequency", "length", "position", "entropy", "learned_entropy", "transformer_based"],
-  "metrics": ["compression_ratio", "bleu_score", "semantic_similarity", "reconstruction_loss", "perplexity", "rouge_score"],
+  "baselines": ["random", "frequency", "length", "learned"],
+  "metrics": ["compression_ratio", "bleu_score", "reconstruction_loss", "perplexity"],
   "device": "auto",
-  "statistical_significance": true,
-  "bootstrap_samples": 1000,
-  "confidence_interval": 0.95,
-  "comment": "Comprehensive production evaluation with statistical rigor and extended baselines"
+  "comment": "Production evaluation with essential baselines and core metrics"
 }

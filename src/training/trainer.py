@@ -81,6 +81,9 @@ class TrainingConfig:
     checkpoint_freq: int = 1000
     eval_freq: int = 500
     
+    # Early stopping
+    patience: int = 10
+    
     # Device
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     
@@ -206,6 +209,7 @@ class JointTrainer:
         self.step = 0
         self.epoch = 0
         self.best_val_score = float('inf')
+        self.epochs_without_improvement = 0
         
         # Checkpoint manager
         self.checkpoint_manager = checkpoint_manager
@@ -227,9 +231,13 @@ class JointTrainer:
         policy_params = sum(p.numel() for p in self.policy.parameters())
         reconstructor_params = sum(p.numel() for p in self.reconstructor.parameters())
         val_seqs = len(val_data) if val_data else 0
+        early_stopping_info = f", Early stopping: {'enabled' if val_data and hasattr(config, 'patience') and config.patience > 0 else 'disabled'}"
+        if val_data and hasattr(config, 'patience') and config.patience > 0:
+            early_stopping_info += f" (patience: {config.patience})"
+        
         logger.info(f"Joint trainer initialized successfully - Policy: {policy_params:,} params, "
                    f"Reconstructor: {reconstructor_params:,} params, Train: {len(train_data)} seqs, "
-                   f"Val: {val_seqs} seqs, Device: {config.device}, Batch: {config.batch_size}")
+                   f"Val: {val_seqs} seqs, Device: {config.device}, Batch: {config.batch_size}{early_stopping_info}")
     
     def load_checkpoint(self, checkpoint_path: str) -> bool:
         """Load training checkpoint to resume training.
@@ -260,6 +268,8 @@ class JointTrainer:
             self.step = checkpoint.get('step', 0)
             self.epoch = checkpoint.get('epoch', 0)
             self.best_val_score = checkpoint.get('best_val_score', float('inf'))
+            self.epochs_without_improvement = checkpoint.get('epochs_without_improvement', 0)
+            self._prev_epoch_best_score = checkpoint.get('_prev_epoch_best_score', float('inf'))
             self.nan_count = checkpoint.get('nan_count', 0)
             self.inf_count = checkpoint.get('inf_count', 0)
             
@@ -851,7 +861,9 @@ class JointTrainer:
                 'config': self.config.__dict__,
                 'nan_count': self.nan_count,
                 'inf_count': self.inf_count,
-                'best_val_score': self.best_val_score
+                'best_val_score': self.best_val_score,
+                'epochs_without_improvement': self.epochs_without_improvement,
+                '_prev_epoch_best_score': getattr(self, '_prev_epoch_best_score', float('inf'))
             }
             
             if self.checkpoint_manager:
@@ -971,6 +983,7 @@ class JointTrainer:
                             logger.info(f"💡 Suggested: micro_batch_size={micro_batch}, accumulation_steps={accum_steps}")
                     
                     # Evaluation
+                    val_metrics = None  # Initialize to handle early stopping logic
                     if self.step % self.config.eval_freq == 0:
                         val_metrics = self.evaluate()
                         if val_metrics:
@@ -986,6 +999,35 @@ class JointTrainer:
                                 is_best = True
                         
                         self.save_checkpoint(output_dir, is_best=is_best)
+                
+                # Check for early stopping at end of epoch
+                # Only apply early stopping if we have validation data and patience is configured
+                if self.val_data and hasattr(self.config, 'patience') and self.config.patience > 0:
+                    # Track previous epoch's best score to detect improvement
+                    if not hasattr(self, '_prev_epoch_best_score'):
+                        self._prev_epoch_best_score = float('inf')
+                    
+                    if self.best_val_score < self._prev_epoch_best_score:
+                        # Validation improved this epoch
+                        self.epochs_without_improvement = 0
+                        self._prev_epoch_best_score = self.best_val_score
+                        logger.info(f"Epoch {epoch} - Validation improved to {self.best_val_score:.4f}, resetting patience counter")
+                    else:
+                        # No improvement this epoch
+                        self.epochs_without_improvement += 1
+                        
+                        if self.epochs_without_improvement >= self.config.patience:
+                            logger.info(f"Early stopping triggered after epoch {epoch} - "
+                                      f"No improvement for {self.epochs_without_improvement} epochs "
+                                      f"(patience: {self.config.patience})")
+                            logger.info(f"Best validation score achieved: {self.best_val_score:.4f}")
+                            
+                            # Save final checkpoint before stopping
+                            self.save_checkpoint(output_dir, final=True)
+                            return  # Exit training loop
+                        else:
+                            logger.info(f"Epoch {epoch} - No validation improvement for {self.epochs_without_improvement} epochs "
+                                      f"(patience: {self.config.patience}, best: {self.best_val_score:.4f})")
                 
                 # End of epoch summary
                 epoch_avg_metrics = {k: np.mean([m[k] for m in epoch_metrics]) 
@@ -1068,7 +1110,8 @@ class JointTrainer:
             raise
         
         logger.info(f"Joint training completed successfully. Steps: {self.step}, "
-                   f"NaN gradients: {self.nan_count}, Inf gradients: {self.inf_count}")
+                   f"NaN gradients: {self.nan_count}, Inf gradients: {self.inf_count}, "
+                   f"Final epoch: {self.epoch}/{self.config.max_epochs-1}")
     
 
 # Utility functions for creating and using the joint trainer

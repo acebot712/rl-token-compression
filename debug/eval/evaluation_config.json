@@ -7,9 +7,7 @@
   "include_baselines": true,
   "baselines": [
     "random",
-    "frequency",
-    "length",
-    "position"
+    "frequency"
   ],
   "device": "mps",
   "n_seeds": 3,
@@ -24,10 +22,22 @@
   "measure_speed": true,
   "measure_memory": true,
   "save_plots": true,
-  "batch_size": 8,
+  "val_data_path": "data/processed/val_data.json",
+  "learning_rate_policy": 0.0003,
+  "learning_rate_reconstructor": 0.0001,
+  "context_window": 8,
+  "reward_type": "information_theoretic",
+  "log_freq": 100,
+  "eval_freq": 500,
+  "checkpoint_freq": 1000,
+  "gradient_accumulation_steps": 8,
+  "micro_batch_size": 4,
+  "comment": "Quick evaluation for development testing",
+  "batch_size": 4,
   "metrics": [
     "compression_ratio",
-    "bleu_score"
+    "reconstruction_loss"
   ],
-  "comment": "Quick evaluation with minimal sequences and metrics for fast feedback"
+  "resume": false,
+  "debug": false
 }

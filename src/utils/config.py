@@ -19,12 +19,25 @@ class Config:
 
 
 def load_json_config(config_path: str) -> Dict[str, Any]:
-    """Load configuration from JSON file. That's it."""
+    """Load configuration from JSON file with base config inheritance."""
     if not os.path.exists(config_path):
         raise FileNotFoundError(f"Config file not found: {config_path}")
     
     with open(config_path, 'r') as f:
-        return json.load(f)
+        config = json.load(f)
+    
+    # Load base config if this isn't the base config itself
+    config_dir = os.path.dirname(config_path)
+    base_config_path = os.path.join(os.path.dirname(config_dir), 'base.json')
+    
+    if os.path.basename(config_path) != 'base.json' and os.path.exists(base_config_path):
+        with open(base_config_path, 'r') as f:
+            base_config = json.load(f)
+        # Base config values are overridden by specific config values
+        base_config.update(config)
+        config = base_config
+    
+    return config
 
 
 def setup_config(default_config: Dict[str, Any], script_name: str = "Script") -> Dict[str, Any]:

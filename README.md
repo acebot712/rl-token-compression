@@ -44,15 +44,12 @@ Our system consists of three main components:
 
 **Development Configs** (`configs/dev/`) - Fast testing, small datasets
 - **`debug.json`** - Ultra-fast debug (1 epoch, 4 batch, 4GB+ systems)
-- **`small_scale.json`** - Quick research (5 epochs, 8 batch, 8GB+ systems)
-- **`quick_eval.json`** - Quick evaluation testing
-- **`sample_data.json`** - Small dataset preparation
 
 **Production Configs** (`configs/prod/`) - Research-quality, full datasets
 - **`standard.json`** - Standard research (50 epochs, 32 batch, 16GB+ systems)
-- **`apple_silicon.json`** - Apple Silicon optimized (50 epochs, 64 batch, 48GB+ M-series)
+- **`mps_optimized.json`** - Apple Silicon MPS optimized (100 epochs, 16 batch, memory-efficient)
 - **`data_prep.json`** - Full dataset preparation
-- **`evaluation.json`** - Comprehensive evaluation
+- **`evaluation.json`** - Essential evaluation with core baselines
 
 *All configs include memory optimizations with gradient accumulation by default.*
 
@@ -98,7 +95,7 @@ python scripts/train_rl.py --config configs/dev/debug.json
 
 **Step 3: Quick evaluation**
 ```bash
-python scripts/run_evaluation.py --config configs/dev/quick_eval.json
+python scripts/run_evaluation.py --config configs/prod/evaluation.json --num_sequences 100
 ```
 
 ### Production Workflow (Research Results)
@@ -110,14 +107,14 @@ python scripts/prepare_data.py --config configs/prod/data_prep.json
 
 **Step 2: Full training**
 ```bash
-# Apple Silicon optimized training (recommended for M-series)
-python scripts/train_rl.py --config configs/prod/apple_silicon.json
+# Apple Silicon MPS optimized training (recommended for M-series)
+python scripts/train_rl.py --config configs/prod/mps_optimized.json
 
 # Standard production training (16GB+ systems)
 python scripts/train_rl.py --config configs/prod/standard.json
 
-# Small-scale research (8GB+ systems)
-python scripts/train_rl.py --config configs/dev/small_scale.json
+# Debug/development training (4GB+ systems)
+python scripts/train_rl.py --config configs/dev/debug.json
 ```
 
 **Step 3: Comprehensive evaluation**
@@ -183,13 +180,11 @@ python scripts/train_reconstructor_cpu.py \
 ### Available Training Configs
 
 **Development configs (fast):**
-- `configs/dev/debug.json` - 1 epoch, batch_size=2 (ultra-fast testing)
-- `configs/dev/quick_test.json` - 2 epochs, batch_size=4 (quick validation)
-- `configs/dev/ablation_study.json` - 20 epochs, batch_size=8 (ablation studies)
+- `configs/dev/debug.json` - 1 epoch, batch_size=4 (ultra-fast testing)
 
 **Production configs (research quality):**
-- `configs/prod/full_training.json` - 100 epochs, batch_size=32 (standard research)
-- `configs/prod/large_scale_training.json` - 200 epochs, batch_size=64 (final results)
+- `configs/prod/standard.json` - 50 epochs, batch_size=32 (standard research)  
+- `configs/prod/mps_optimized.json` - 100 epochs, batch_size=16 (Apple Silicon optimized)
 
 ## Complete Example Workflows
 
@@ -206,7 +201,7 @@ python scripts/prepare_data.py --config configs/dev/sample_data.json
 python scripts/train_rl.py --config configs/dev/debug.json
 
 # 4. Quick evaluation
-python scripts/run_evaluation.py --config configs/dev/quick_eval.json
+python scripts/run_evaluation.py --config configs/prod/evaluation.json --num_sequences 100
 
 # 5. Check results
 ls debug/
@@ -222,7 +217,7 @@ python tests/test_system.py
 python scripts/prepare_data.py --config configs/prod/data_prep.json
 
 # 3. Full training (100 epochs - this takes time)
-python scripts/train_rl.py --config configs/prod/full_training.json
+python scripts/train_rl.py --config configs/prod/mps_optimized.json
 
 # 4. Comprehensive evaluation (5,000 sequences)
 python scripts/run_evaluation.py --config configs/prod/evaluation.json
@@ -250,8 +245,8 @@ python scripts/train_rl.py --config configs/dev/small_scale.json
 # 16GB+ systems - Standard production
 python scripts/train_rl.py --config configs/prod/standard.json
 
-# 48GB+ Apple Silicon - Optimal performance
-python scripts/train_rl.py --config configs/prod/apple_silicon.json
+# Apple Silicon M-series - MPS optimized performance
+python scripts/train_rl.py --config configs/prod/mps_optimized.json
 ```
 
 ### Key Memory Optimizations
@@ -274,7 +269,7 @@ python scripts/train_rl.py --config configs/prod/apple_silicon.json
 # Test that everything works before long runs
 python tests/test_system.py
 python scripts/prepare_data.py --config configs/dev/sample_data.json
-python scripts/train_rl.py --config configs/dev/quick_test.json
+python scripts/train_rl.py --config configs/dev/debug.json
 python scripts/run_evaluation.py --config configs/dev/quick_eval.json
 ```
 
@@ -284,10 +279,10 @@ You can override any config parameter:
 
 ```bash
 # Use config but change batch size
-python scripts/train_rl.py --config configs/prod/full_training.json --batch_size 32
+python scripts/train_rl.py --config configs/prod/mps_optimized.json --batch_size 32
 
 # Use config but change device and epochs
-python scripts/train_rl.py --config configs/prod/full_training.json --device cpu --max_epochs 10
+python scripts/train_rl.py --config configs/prod/mps_optimized.json --device cpu --max_epochs 10
 
 # Use config but change multiple parameters
 python scripts/run_evaluation.py --config configs/prod/evaluation.json \
@@ -323,8 +318,8 @@ python scripts/train_rl.py --config configs/dev/debug.json        # 4GB+
 python scripts/train_rl.py --config configs/dev/small_scale.json  # 8GB+
 python scripts/train_rl.py --config configs/prod/standard.json    # 16GB+
 
-# Apple Silicon: leverages unified memory efficiently
-python scripts/train_rl.py --config configs/prod/apple_silicon.json
+# Apple Silicon: MPS optimized with unified memory
+python scripts/train_rl.py --config configs/prod/mps_optimized.json
 ```
 
 **Can't beat baselines:**

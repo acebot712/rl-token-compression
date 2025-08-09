@@ -1,12 +1,13 @@
 {
   "model_path": "debug/run/final_checkpoint.pt",
-  "data_path": "debug/data/test_data.json",
+  "data_path": "debug/data/test_data.json", 
   "output_dir": "debug/eval",
   "reconstructor_path": "models/reconstructor/fine-tuned/checkpoint-5000",
   "num_sequences": 10,
-  "batch_size": 8,
+  "batch_size": 4,
   "include_baselines": true,
-  "metrics": ["compression_ratio", "bleu_score"],
+  "baselines": ["random", "frequency"],
+  "metrics": ["compression_ratio", "reconstruction_loss"],
   "device": "auto",
-  "comment": "Quick evaluation with minimal sequences and metrics for fast feedback"
+  "comment": "Quick evaluation for development testing"
 }
