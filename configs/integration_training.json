@@ -1,0 +1,21 @@
+{
+  "data_path": "integration/outputs/data_mini/processed_data.json",
+  "output_dir": "integration/outputs/training_mini",
+  "val_data_path": "integration/outputs/data_mini/val_data.json",
+  "max_epochs": 1,
+  "max_steps_per_epoch": 3,
+  "batch_size": 2,
+  "learning_rate_policy": 1e-3,
+  "learning_rate_reconstructor": 5e-4,
+  "context_window": 2,
+  "reward_type": "simple",
+  "device": "auto",
+  "log_freq": 1,
+  "eval_freq": 5,
+  "checkpoint_freq": 5,
+  "gradient_accumulation_steps": 1,
+  "micro_batch_size": 2,
+  "early_stopping_patience": 10,
+  "random_seed": 42,
+  "comment": "Ultra-fast integration test config - 1 epoch, 3 steps, minimal resources"
+}

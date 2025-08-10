@@ -1,0 +1,14 @@
+{
+  "output_dir": "integration/outputs/data_mini",
+  "max_sequences": 10,
+  "max_length": 64,
+  "train_split": 0.7,
+  "val_split": 0.2,
+  "test_split": 0.1,
+  "tokenizer": "gpt2",
+  "dataset_name": "reddit",
+  "min_length": 10,
+  "filter_duplicates": false,
+  "random_seed": 42,
+  "comment": "Ultra-minimal dataset for integration testing - 10 samples, 64 tokens max"
+}

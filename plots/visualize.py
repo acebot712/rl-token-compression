@@ -2,7 +2,7 @@
 Comprehensive visualization utilities for token compression evaluation.
 
 This module provides the main visualization functions expected by the evaluation
-pipeline, leveraging the plotting utilities from src.utils.plotting.
+pipeline, leveraging the plotting utilities from utils.plotting.
 """
 
 import os
@@ -15,7 +15,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from src.utils.plotting import (
+from utils.plotting import (
     create_research_dashboard,
     create_comparison_bar_plot,
     create_training_curves,

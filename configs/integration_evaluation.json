@@ -1,0 +1,12 @@
+{
+  "model_path": "integration/outputs/training_mini/final_model.pt",
+  "data_path": "integration/outputs/data_mini/test_data.json",
+  "output_dir": "integration/outputs/evaluation_mini",
+  "num_sequences": 5,
+  "batch_size": 2,
+  "device": "auto",
+  "save_detailed_results": true,
+  "run_baselines": false,
+  "random_seed": 42,
+  "comment": "Minimal evaluation config for integration testing - 5 sequences only"
+}

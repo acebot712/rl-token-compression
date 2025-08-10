@@ -84,6 +84,9 @@ poetry.lock
 # Pyre type checker
 .pyre/
 
+# Ruff linter cache
+.ruff_cache/
+
 # VS Code
 .vscode/
 
@@ -108,6 +111,15 @@ env/
 /eval/test/
 /plots/*.png
 
+# Generated output directories  
+/outputs/
+/integration/
+/debug/
+
+# Training and test logs
+*_test.log
+training_logs.txt
+
 # Large files
 *.zip
 *.tar.gz
@@ -118,8 +130,18 @@ env/
 *.safetensors
 *.jsonl
 
-# Egg info
-tl_token_compression.egg-info/
+# ML framework logs and temp files
+tb_logs/
+tensorboard_*
+wandb/
+.neptune/
+*_temp/
+temp_*
+*.jpg
+*.jpeg
+
+# Egg info (generalized)
+*.egg-info/
 
 # Misc
 .DS_Store

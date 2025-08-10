@@ -27,10 +27,10 @@ from typing import List, Dict, Any
 
 
 # Import our components
-from src.models.agent import SimpleCompressionPolicy
-from src.training.rewards import InformationTheoreticReward, SimpleReward
-from src.evaluation.baselines import create_baseline, evaluate_baselines
-from src.evaluation.evaluator import CompressionEvaluator
+from models.agent import SimpleCompressionPolicy
+from training.rewards import InformationTheoreticReward, SimpleReward
+from evaluation.baselines import create_baseline, evaluate_baselines
+from evaluation.evaluator import CompressionEvaluator
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
@@ -109,7 +109,7 @@ def test_joint_training_approach():
     # Test that we can create the components
     try:
         from transformers import GPT2Tokenizer, GPT2LMHeadModel
-        from src.training.trainer import TrainingConfig, JointTrainer
+        from training.trainer import TrainingConfig, JointTrainer
         
         logger.info("Creating joint training components...")
         
