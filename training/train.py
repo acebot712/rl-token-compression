@@ -1,7 +1,11 @@
 import os
 import sys
 
-# MPS memory configuration is handled by Apple Silicon memory manager
+# CRITICAL: Set MPS memory configuration BEFORE importing PyTorch
+# This disables the artificial 60% memory limit (28.8GB of 48GB)
+os.environ['PYTORCH_MPS_HIGH_WATERMARK_RATIO'] = '0.0'  # Disable upper limit
+os.environ['PYTORCH_MPS_LOW_WATERMARK_RATIO'] = '0.0'   # Disable lower limit
+print("✓ MPS memory limits disabled - can use full unified memory")
 
 # Add project root to Python path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

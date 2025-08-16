@@ -25,8 +25,14 @@ if PROJECT_ROOT not in sys.path:
 
 import torch
 import json
+import time
+from datetime import datetime
 import numpy as np
 from typing import Dict, List, Any
+
+from utils.logging import get_component_logger
+
+logger = get_component_logger("EVALUATION")
 
 from utils.config import setup_config, save_config, resolve_device
 from utils.common import setup_output_dir, print_section_header, print_config_summary, handle_common_errors, print_summary_table
@@ -36,23 +42,43 @@ from evaluation.baselines import create_baseline, evaluate_baselines, load_corpu
 
 def run_baseline_evaluation(config: Dict[str, Any]) -> Dict[str, Any]:
     """Run baseline evaluations and return results."""
+    logger.info("="*60)
+    logger.info("STARTING BASELINE EVALUATION")
+    logger.info("="*60)
+    
     print("Running baseline evaluations...")
     
     # Load test data
+    logger.info(f"Loading test data from: {config['data_path']}")
+    eval_start = time.time()
     test_data, metadata = load_corpus_for_baselines(config['data_path'])
+    load_time = time.time() - eval_start
+    logger.info(f"Test data loaded in {load_time:.2f} seconds ({len(test_data)} sequences)")
     
     if len(test_data) > config['num_sequences']:
         test_data = test_data[:config['num_sequences']]
+        logger.info(f"Limited evaluation to {config['num_sequences']} sequences (from {len(test_data)} available)")
         print(f"Limited to {config['num_sequences']} sequences for evaluation")
     
     # Create and evaluate baselines
     baseline_results = {}
-    for baseline_name in config['baselines']:
+    total_baselines = len(config['baselines'])
+    
+    for idx, baseline_name in enumerate(config['baselines'], 1):
+        logger.info(f"Starting evaluation of baseline {idx}/{total_baselines}: {baseline_name}")
         print(f"Evaluating {baseline_name} baseline...")
+        baseline_start = time.time()
+        
         try:
+            logger.info(f"Creating baseline compressor: {baseline_name}")
             baseline = create_baseline(baseline_name)
+            
+            logger.info(f"Running evaluation on {len(test_data)} sequences with target ratios: {config.get('target_ratios', [0.3, 0.5, 0.7])}")
             results = evaluate_baselines([baseline], test_data, config.get('target_ratios', [0.3, 0.5, 0.7]))
             baseline_results[baseline_name] = results[baseline_name]
+            
+            baseline_time = time.time() - baseline_start
+            logger.info(f"Baseline {baseline_name} completed in {baseline_time:.2f} seconds")
             
             # Extract compression ratios and quality for display - get the first target ratio as example
             first_ratio_key = list(results[baseline_name].keys())[0]  # e.g., 'ratio_0.3'
@@ -71,16 +97,21 @@ def run_baseline_evaluation(config: Dict[str, Any]) -> Dict[str, Any]:
             # Format numbers properly, handle N/A strings
             comp_str = f"{comp_ratio:.3f}" if isinstance(comp_ratio, (int, float)) else str(comp_ratio)
             qual_str = f"{quality:.3f}" if isinstance(quality, (int, float)) else str(quality)
+            logger.info(f"Results for {baseline_name}: compression={comp_str}, quality={qual_str}")
             print(f"  {baseline_name}: compression={comp_str}, quality={qual_str}")
             
         except Exception as e:
+            baseline_time = time.time() - baseline_start
+            logger.error(f"Failed to evaluate {baseline_name} after {baseline_time:.2f} seconds: {e}")
             print(f"  Failed to evaluate {baseline_name}: {e}")
             baseline_results[baseline_name] = {"error": str(e)}
     
     # Save results
+    logger.info("Saving baseline evaluation results...")
     baseline_path = os.path.join(config['output_dir'], "baseline_results.json")
     with open(baseline_path, 'w') as f:
         json.dump(baseline_results, f, indent=2)
+    logger.info(f"Baseline results saved to: {baseline_path}")
     print(f"Baseline results saved to: {baseline_path}")
     
     return baseline_results

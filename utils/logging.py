@@ -33,6 +33,46 @@ def get_metrics_logger(name: str) -> logging.Logger:
     """Get logger for metrics (same as regular logger for simplicity)."""
     return get_logger(name)
 
+def setup_verbose_logging(component: str = "SYSTEM") -> logging.Logger:
+    """
+    Setup verbose logging with consistent formatting across all components.
+    
+    Args:
+        component: Component name (e.g., "DATA-PREP", "TRAINING", "EVALUATION")
+    
+    Returns:
+        Configured logger instance
+    """
+    # Get component-specific logger
+    logger = logging.getLogger(f"{component.lower()}")
+    
+    # Only configure if not already configured
+    if not logger.handlers:
+        handler = logging.StreamHandler(sys.stdout)
+        formatter = logging.Formatter(
+            f'%(asctime)s [{component}] %(levelname)s: %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+        # Prevent propagation to root logger to avoid double logging
+        logger.propagate = False
+    
+    return logger
+
+def get_component_logger(component: str) -> logging.Logger:
+    """
+    Get a logger for a specific component with standardized formatting.
+    
+    Args:
+        component: Component name (e.g., "DATA-PREP", "TRAINING", "EVALUATION")
+    
+    Returns:
+        Configured logger for the component
+    """
+    return setup_verbose_logging(component)
+
 def get_tensor_diagnostics(tensor: torch.Tensor, name: str = "tensor") -> Dict[str, Any]:
     """Get comprehensive diagnostics for a tensor."""
     if tensor is None:

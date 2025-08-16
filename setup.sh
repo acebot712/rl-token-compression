@@ -16,6 +16,11 @@ MIN_PYTHON_VERSION="3.8"
 REQUIRED_PYTHON_VERSION="3.9"
 VENV_NAME="venv"
 
+# MPS Memory Configuration for Apple Silicon
+# Disable artificial 60% memory limit to use full unified memory
+export PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0
+export PYTORCH_MPS_LOW_WATERMARK_RATIO=0.0
+
 # Print functions
 print_header() {
     echo -e "${BLUE}================================${NC}"
@@ -25,23 +30,23 @@ print_header() {
 }
 
 print_step() {
-    echo -e "${BLUE}[STEP]${NC} $1"
+    echo -e "${BLUE}[$(date '+%H:%M:%S') STEP]${NC} $1"
 }
 
 print_success() {
-    echo -e "${GREEN}✓${NC} $1"
+    echo -e "${GREEN}[$(date '+%H:%M:%S')] ✓${NC} $1"
 }
 
 print_warning() {
-    echo -e "${YELLOW}⚠${NC} $1"
+    echo -e "${YELLOW}[$(date '+%H:%M:%S')] ⚠${NC} $1"
 }
 
 print_error() {
-    echo -e "${RED}❌${NC} $1"
+    echo -e "${RED}[$(date '+%H:%M:%S')] ❌${NC} $1"
 }
 
 print_info() {
-    echo -e "   $1"
+    echo -e "   [$(date '+%H:%M:%S')] $1"
 }
 
 # Check if command exists
@@ -120,6 +125,8 @@ detect_compute_platform() {
                 COMPUTE_PLATFORM="mps"
                 GPU_INFO="Apple Silicon (MPS) detected"
                 print_info "$GPU_INFO"
+                print_info "MPS memory limits disabled (PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0)"
+                print_info "Can use full unified memory (48GB on M4 Pro)"
             fi
         fi
     fi
@@ -356,7 +363,7 @@ run_integration_tests() {
     rm -rf integration/outputs/
     
     echo "   Testing data preparation pipeline..."
-    if python data/prepare.py --config configs/integration_data.json > integration_test.log 2>&1; then
+    if python data/prepare.py --config configs/integration_data.json 2>&1 | tee -a integration_test.log; then
         print_success "✓ Data preparation successful"
     else
         print_error "✗ Data preparation failed - check integration_test.log"
@@ -365,7 +372,7 @@ run_integration_tests() {
     fi
     
     echo "   Testing training pipeline..."  
-    if python training/train.py --config configs/integration_training.json >> integration_test.log 2>&1; then
+    if python training/train.py --config configs/integration_training.json 2>&1 | tee -a integration_test.log; then
         print_success "✓ Training pipeline successful"
     else
         print_error "✗ Training pipeline failed - check integration_test.log"
@@ -374,7 +381,7 @@ run_integration_tests() {
     fi
     
     echo "   Testing evaluation pipeline..."
-    if python evaluation/evaluate.py --config configs/integration_evaluation.json >> integration_test.log 2>&1; then
+    if python evaluation/evaluate.py --config configs/integration_evaluation.json 2>&1 | tee -a integration_test.log; then
         print_success "✓ Evaluation pipeline successful"
     else
         print_error "✗ Evaluation pipeline failed - check integration_test.log"
@@ -414,7 +421,7 @@ run_production_validation() {
     rm -rf outputs/data_sample outputs/training_debug outputs/evaluation_sample
     
     echo "   Testing with data_sample.json..."
-    if python data/prepare.py --config configs/data_sample.json > production_test.log 2>&1; then
+    if python data/prepare.py --config configs/data_sample.json 2>&1 | tee production_test.log; then
         print_success "✓ Sample data preparation successful"
     else
         print_error "✗ Sample data preparation failed - check production_test.log"
@@ -427,7 +434,7 @@ run_production_validation() {
     local temp_config=$(mktemp)
     jq '.data_path = "outputs/data_sample/processed_data.json" | .val_data_path = "outputs/data_sample/val_data.json"' configs/training_debug.json > "$temp_config"
     
-    if python training/train.py --config "$temp_config" >> production_test.log 2>&1; then
+    if python training/train.py --config "$temp_config" 2>&1 | tee -a production_test.log; then
         print_success "✓ Debug training successful"
     else
         print_error "✗ Debug training failed - check production_test.log"
@@ -442,7 +449,7 @@ run_production_validation() {
     local temp_eval=$(mktemp)
     jq '.model_path = "debug/run/best_model.zip" | .data_path = "outputs/data_sample/test_data.json" | .output_dir = "outputs/evaluation_sample"' configs/evaluation.json > "$temp_eval"
     
-    if python evaluation/evaluate.py --config "$temp_eval" >> production_test.log 2>&1; then
+    if python evaluation/evaluate.py --config "$temp_eval" 2>&1 | tee -a production_test.log; then
         print_success "✓ Sample evaluation successful"
     else
         print_error "✗ Sample evaluation failed - check production_test.log"
@@ -474,7 +481,7 @@ run_full_research_test() {
     rm -rf outputs/research_test
     
     echo "   Phase 1: Full data preparation (may take 30+ minutes)..."
-    if python data/prepare.py --config configs/data.json --output_dir outputs/research_test/data > full_research_test.log 2>&1; then
+    if python data/prepare.py --config configs/data.json --output_dir outputs/research_test/data 2>&1 | tee full_research_test.log; then
         print_success "✓ Full data preparation successful"
     else
         print_error "✗ Full data preparation failed - check full_research_test.log"
@@ -518,7 +525,7 @@ run_full_research_test() {
         print_warning "Large batch size ($batch_size) detected on MPS - this may cause OOM"
     fi
     
-    if python training/train.py --config "$temp_training" $resume_flag >> full_research_test.log 2>&1; then
+    if python training/train.py --config "$temp_training" $resume_flag 2>&1 | tee -a full_research_test.log; then
         print_success "✓ Full production training successful"
     else
         print_error "✗ Full production training failed - check full_research_test.log"
@@ -533,7 +540,7 @@ run_full_research_test() {
     local temp_eval=$(mktemp)
     jq '.model_path = "outputs/research_test/training/best_model.zip" | .data_path = "outputs/research_test/data/test_data.json" | .output_dir = "outputs/research_test/evaluation"' configs/evaluation.json > "$temp_eval"
     
-    if python evaluation/evaluate.py --config "$temp_eval" >> full_research_test.log 2>&1; then
+    if python evaluation/evaluate.py --config "$temp_eval" 2>&1 | tee -a full_research_test.log; then
         print_success "✓ Full evaluation successful"
     else
         print_error "✗ Full evaluation failed - check full_research_test.log"

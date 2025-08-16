@@ -33,8 +33,8 @@ from evaluation.baselines import create_baseline, evaluate_baselines, load_corpu
 from models.agent import SimpleCompressionPolicy
 
 # Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from utils.logging import get_component_logger
+logger = get_component_logger("EVALUATOR")
 
 
 @dataclass

@@ -84,13 +84,13 @@ class UnifiedMemoryManager:
     def _setup_unified_memory_optimizations(self):
         """Setup Apple Silicon unified memory optimizations."""
         try:
-            # UNIFIED MEMORY OPTIMIZATION: Don't artificially limit memory
-            # Unlike CUDA, we want to use the unified memory pool efficiently
-            # Remove artificial memory fraction limits that don't apply to unified memory
+            # UNIFIED MEMORY OPTIMIZATION: Disable artificial memory limits
+            # Default PyTorch MPS limits to 60% of system memory (28.8GB of 48GB)
+            # We need to disable this to use the full unified memory available
             
             # Set environment variables for optimal MPS performance
-            os.environ['PYTORCH_MPS_HIGH_WATERMARK_RATIO'] = '0.8'  # Use 80% of unified memory for stability
-            os.environ['PYTORCH_MPS_LOW_WATERMARK_RATIO'] = '0.6'   # Start cleanup at 60%
+            os.environ['PYTORCH_MPS_HIGH_WATERMARK_RATIO'] = '0.0'  # Disable upper limit (use all available memory)
+            os.environ['PYTORCH_MPS_LOW_WATERMARK_RATIO'] = '0.0'   # Disable lower limit (manual cleanup)
             
             # Enable MPS optimizations
             if hasattr(torch.backends.mps, 'is_built'):
@@ -312,9 +312,10 @@ class MPSOptimizedTraining:
 
 def setup_apple_silicon_optimizations():
     """Setup global optimizations for Apple Silicon."""
-    # Optimize for unified memory and Metal Performance Shaders
-    os.environ['PYTORCH_MPS_HIGH_WATERMARK_RATIO'] = '0.8'
-    os.environ['PYTORCH_MPS_LOW_WATERMARK_RATIO'] = '0.6'
+    # CRITICAL: Disable artificial memory limit to use full unified memory
+    # Default PyTorch limits to 60% (28.8GB of 48GB), we need more for training
+    os.environ['PYTORCH_MPS_HIGH_WATERMARK_RATIO'] = '0.0'  # Disable upper limit
+    os.environ['PYTORCH_MPS_LOW_WATERMARK_RATIO'] = '0.0'   # Disable lower limit
     
     # Optimize threading for Apple Silicon
     os.environ['OMP_NUM_THREADS'] = '8'  # M4 Pro has 8 performance cores
@@ -328,6 +329,7 @@ def setup_apple_silicon_optimizations():
     
     logger.info("Apple Silicon optimizations configured")
     logger.info("  Unified memory optimizations: enabled")
-    logger.info("  MPS high watermark: 80% (unified memory)")
-    logger.info("  MPS low watermark: 60% (cleanup threshold)")
+    logger.info("  MPS high watermark: DISABLED (using full unified memory)")
+    logger.info("  MPS low watermark: DISABLED (manual memory management)")
     logger.info("  Threading optimized for M4 Pro (8 performance cores)")
+    logger.warning("  ⚠️ MPS memory limits disabled - monitor system memory carefully")
