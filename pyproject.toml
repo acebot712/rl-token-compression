@@ -1,0 +1,21 @@
+[tool.ruff]
+line-length = 120
+target-version = "py38"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E402",  # Module level import not at top of file (needed for environment setup)
+    "E501",  # Line too long (allow longer lines for descriptive logging)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Allow unused imports in evaluation modules for NLTK optional dependency
+"evaluation/evaluator.py" = ["F401"]

@@ -28,45 +28,47 @@ pip install -r requirements.txt
 
 ### Data Preparation
 ```bash
-python data/prepare.py --output_dir data/processed --max_sequences 50000 --max_length 1024
+python data/prepare.py --config configs/data/sample.json
 ```
 
 ### Training Commands
 
 **Reconstructor Training:**
 ```bash
-# CPU version
-python models/reconstructor/train_cpu.py --data_path data/processed/processed_data.json --output_dir models/reconstructor/fine-tuned --epochs 3 --batch_size 8 --mask_ratio 0.3
+# Debug training (quick test)
+python training/train.py --config configs/training/debug.json
 
-# GPU version (CUDA)
-python models/reconstructor/train_gpu.py --data_path data/processed/processed_data.json --output_dir models/reconstructor/fine-tuned --device cuda --max_length 512 --use_amp --gradient_accumulation_steps 4 --batch_size 4
+# CUDA training (high-performance)
+python training/train.py --config configs/training/cuda.json
 
-# MPS (Apple Silicon) - AMP automatically disabled
-python models/reconstructor/train_gpu.py --data_path data/processed/processed_data.json --output_dir models/reconstructor/fine-tuned --device mps --max_length 512 --gradient_accumulation_steps 4 --batch_size 4
+# MPS training (Apple Silicon optimized)
+python training/train.py --config configs/training/mps.json
+
+# Default training (conservative settings)
+python training/train.py --config configs/training/default.json
 ```
 
 **RL Agent Training:**
 ```bash
-python rl/train.py --data_path data/processed/processed_data.json --output_dir models/agent/output --reconstructor_path models/reconstructor/fine-tuned --num_timesteps 1000000 --n_steps 2048 --batch_size 64 --gamma 0.99
+python training/train.py --config configs/training/default.json
 ```
 
 ### Evaluation and Testing
 ```bash
 # Main evaluation
-python eval/evaluate.py --model_path models/agent/output/best_model.zip --data_path data/processed/test_data.json --output_dir eval/test_output --num_sequences 100
+python evaluation/evaluate.py --config configs/evaluation/default.json
 
 # Generate plots
-python plots/visualize.py --log_dir models/agent/output/tb_logs --results_path eval/test_output/evaluation_results.json --output_dir plots/output
+python plots/visualize.py --results_path outputs/evaluation/evaluation_results.json --output_dir plots/output
 ```
 
 ### Component Testing
 Each component has a dedicated test script for verification:
 ```bash
-python data/test_prepare.py           # Test data preparation
-python models/reconstructor/test_train.py  # Test reconstructor training
-python models/agent/test_policy.py   # Test policy network
-python rl/test_train.py              # Test RL training loop  
-python eval/test_evaluate.py         # Test evaluation pipeline
+python tests/test_data_prepare.py     # Test data preparation
+python tests/test_models.py          # Test model components
+python tests/test_trainer.py         # Test training pipeline
+python tests/test_evaluation.py      # Test evaluation pipeline
 ```
 
 ## Key Implementation Details

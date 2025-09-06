@@ -2,12 +2,12 @@
 Pytest configuration and shared fixtures.
 """
 
+import shutil
+import tempfile
+
+import numpy as np
 import pytest
 import torch
-import numpy as np
-import tempfile
-import shutil
-import os
 
 
 @pytest.fixture(autouse=True)
@@ -48,16 +48,11 @@ def sample_config():
         "learning_rate_reconstructor": 1e-4,
         "max_epochs": 2,
         "context_window": 3,
-        "device": "cpu"
+        "device": "cpu",
     }
 
 
 @pytest.fixture
 def sample_sequences():
     """Sample token sequences for testing."""
-    return [
-        [1, 2, 3, 4, 5],
-        [10, 11, 12, 13],
-        [20, 21, 22, 23, 24, 25],
-        [30, 31, 32]
-    ]
+    return [[1, 2, 3, 4, 5], [10, 11, 12, 13], [20, 21, 22, 23, 24, 25], [30, 31, 32]]

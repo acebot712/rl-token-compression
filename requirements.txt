@@ -5,6 +5,7 @@
 transformers>=4.30.0
 datasets>=2.10.0
 tokenizers>=0.13.0
+accelerate>=0.20.0
 
 # Scientific computing
 numpy>=1.21.0

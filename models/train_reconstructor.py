@@ -1,25 +1,23 @@
-import os
 import json
-import torch
-import torch.nn as nn
-import numpy as np
-from torch.utils.data import Dataset, DataLoader
-from transformers import GPT2Tokenizer, GPT2LMHeadModel, GPT2Config
-from torch.optim import AdamW
-from transformers import get_scheduler
-from tqdm import tqdm
+import os
 import random
+
+import torch
+from torch.optim import AdamW
+from torch.utils.data import DataLoader, Dataset
+from tqdm import tqdm
+from transformers import GPT2LMHeadModel, GPT2Tokenizer, get_scheduler
 
 
 class MaskedSequenceDataset(Dataset):
     """Dataset for fine-tuning GPT-2 on the task of reconstructing masked sequences."""
-    
+
     def __init__(
         self,
         data_path: str,
         tokenizer: GPT2Tokenizer,
         max_length: int = 1024,
-        mask_ratio: float = 0.3
+        mask_ratio: float = 0.3,
     ):
         """
         Args:
@@ -32,11 +30,11 @@ class MaskedSequenceDataset(Dataset):
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.mask_ratio = mask_ratio
-        
+
         # Load data
-        with open(data_path, "r") as f:
+        with open(data_path) as f:
             self.data = json.load(f)
-            
+
         # Filter sequences and ensure they are valid
         self.sequences = []
         for seq in self.data:
@@ -46,79 +44,91 @@ class MaskedSequenceDataset(Dataset):
                     print(f"Warning: tokens is not a list: {type(tokens)}")
                     continue
                 if not all(isinstance(t, int) for t in tokens):
-                    print(f"Warning: tokens contains non-integer values")
+                    print("Warning: tokens contains non-integer values")
                     continue
                 if len(tokens) >= 10:  # Ensure minimum length
                     self.sequences.append(tokens)
             except (KeyError, TypeError) as e:
                 print(f"Warning: Skipping invalid sequence: {e}")
-        
+
         print(f"Loaded {len(self.sequences)} valid sequences")
-        
+
         # Special tokens
         self.mask_token_id = tokenizer.eos_token_id  # Using EOS as a mask token
         self.pad_token_id = tokenizer.pad_token_id
-    
+
     def __len__(self):
         return len(self.sequences)
-    
+
     def __getitem__(self, idx):
         try:
             tokens = self.sequences[idx]
-            
+
             # Truncate if necessary
             if len(tokens) > self.max_length:
                 start_idx = random.randint(0, len(tokens) - self.max_length)
-                tokens = tokens[start_idx:start_idx + self.max_length]
-            
+                tokens = tokens[start_idx : start_idx + self.max_length]
+
             # Create random mask
             mask = torch.rand(len(tokens)) < self.mask_ratio
-            
+
             # CRITICAL FIX: Ensure at least one token is always unmasked
             # If all tokens are masked, randomly unmask one
             if mask.all() and len(tokens) > 0:
                 unmask_idx = random.randint(0, len(tokens) - 1)
                 mask[unmask_idx] = False
-            
+
             # Also ensure we don't mask too few tokens (for learning)
             # If no tokens are masked, randomly mask at least one
             if not mask.any() and len(tokens) > 1:
                 mask_idx = random.randint(0, len(tokens) - 1)
                 mask[mask_idx] = True
-            
+
             # Apply mask
             original_tokens = torch.tensor(tokens, dtype=torch.long)
             masked_tokens = original_tokens.clone()
             masked_tokens[mask] = self.mask_token_id
-            
+
             # Pad sequences to max_length
             padding_length = self.max_length - len(tokens)
             if padding_length > 0:
-                original_tokens = torch.cat([
-                    original_tokens,
-                    torch.full((padding_length,), fill_value=self.pad_token_id, dtype=torch.long)
-                ])
-                masked_tokens = torch.cat([
-                    masked_tokens,
-                    torch.full((padding_length,), fill_value=self.pad_token_id, dtype=torch.long)
-                ])
-            
+                original_tokens = torch.cat(
+                    [
+                        original_tokens,
+                        torch.full(
+                            (padding_length,),
+                            fill_value=self.pad_token_id,
+                            dtype=torch.long,
+                        ),
+                    ]
+                )
+                masked_tokens = torch.cat(
+                    [
+                        masked_tokens,
+                        torch.full(
+                            (padding_length,),
+                            fill_value=self.pad_token_id,
+                            dtype=torch.long,
+                        ),
+                    ]
+                )
+
             # Create attention mask (1 for real tokens, 0 for padding)
             attention_mask = torch.ones_like(masked_tokens)
             if padding_length > 0:
                 attention_mask[-padding_length:] = 0
-            
+
             # Validation: Ensure we have valid data
             assert not torch.isnan(original_tokens).any(), "NaN found in original tokens"
             assert not torch.isnan(masked_tokens).any(), "NaN found in masked tokens"
             assert not torch.isnan(attention_mask.float()).any(), "NaN found in attention mask"
             assert (original_tokens >= 0).all(), "Negative token IDs found"
             assert (masked_tokens >= 0).all(), "Negative masked token IDs found"
-            
+
             return {
                 "input_ids": masked_tokens,
                 "labels": original_tokens,
-                "attention_mask": attention_mask
+                "attention_mask": attention_mask,
             }
         except Exception as e:
             print(f"Error processing sequence at index {idx}: {e}")
@@ -141,11 +151,11 @@ def train_reconstructor(
     gradient_accumulation_steps: int = 1,
     max_length: int = 512,  # Reduced from 1024
     use_amp: bool = True,  # Automatic Mixed Precision
-    memory_efficient_attention: bool = True
+    memory_efficient_attention: bool = True,
 ):
     """
     Fine-tune GPT-2 for token reconstruction.
-    
+
     Args:
         data_path: Path to tokenized data
         output_dir: Directory to save the fine-tuned model
@@ -165,14 +175,14 @@ def train_reconstructor(
     """
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
-    
+
     # Initialize tokenizer and model
     tokenizer = GPT2Tokenizer.from_pretrained(model_name)
-    
+
     # Add padding token if it doesn't exist
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-        
+
     # Determine device
     if device is None:
         if torch.cuda.is_available():
@@ -182,45 +192,41 @@ def train_reconstructor(
         else:
             device = "cpu"
     print(f"Using device: {device}")
-    
+
     # CRITICAL FIX: Disable AMP for MPS as it's not stable
     if device == "mps":
         use_amp = False
         print("Disabled AMP for MPS device due to stability issues")
-    
+
     # Initialize model with memory-efficient options
     # CRITICAL FIX: Use float32 for MPS instead of float16
     model_dtype = torch.float32
     if use_amp and device == "cuda":
         model_dtype = torch.float16
-        
-    model = GPT2LMHeadModel.from_pretrained(
-        model_name,
-        torch_dtype=model_dtype,
-        low_cpu_mem_usage=True
-    ).to(device)
-    
+
+    model = GPT2LMHeadModel.from_pretrained(model_name, torch_dtype=model_dtype, low_cpu_mem_usage=True).to(device)
+
     if memory_efficient_attention:
         model.config.use_cache = False
-    
+
     # Initialize mixed precision training (only for CUDA)
     scaler = torch.cuda.amp.GradScaler() if use_amp and device == "cuda" else None
-    
+
     # Create dataset and dataloader
     dataset = MaskedSequenceDataset(
         data_path=data_path,
         tokenizer=tokenizer,
         mask_ratio=mask_ratio,
-        max_length=max_length
+        max_length=max_length,
     )
     dataloader = DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
-        pin_memory=True if device in ["cuda", "mps"] else False
+        pin_memory=True if device in ["cuda", "mps"] else False,
     )
-    
+
     # Initialize optimizer and scheduler
     optimizer = AdamW(model.parameters(), lr=learning_rate)
     total_steps = len(dataloader) * epochs // gradient_accumulation_steps
@@ -228,44 +234,44 @@ def train_reconstructor(
         name="linear",
         optimizer=optimizer,
         num_warmup_steps=warmup_steps,
-        num_training_steps=total_steps
+        num_training_steps=total_steps,
     )
-    
+
     # Training loop
     global_step = 0
     training_stats = []
-    
+
     for epoch in range(epochs):
         # Training
         model.train()
         epoch_loss = 0
         optimizer.zero_grad()
-        
-        progress_bar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{epochs}")
+
+        progress_bar = tqdm(dataloader, desc=f"Epoch {epoch + 1}/{epochs}")
         for step, batch in enumerate(progress_bar):
             try:
                 # Move batch to device
                 input_ids = batch["input_ids"].to(device)
                 attention_mask = batch["attention_mask"].to(device)
                 labels = batch["labels"].to(device)
-                
+
                 # Forward pass with mixed precision
                 if use_amp and device == "cuda":
                     with torch.cuda.amp.autocast():
                         outputs = model(
                             input_ids=input_ids,
                             attention_mask=attention_mask,
-                            labels=labels
+                            labels=labels,
                         )
                 else:
                     outputs = model(
                         input_ids=input_ids,
                         attention_mask=attention_mask,
-                        labels=labels
+                        labels=labels,
                     )
-                
+
                 loss = outputs.loss / gradient_accumulation_steps
-                
+
                 # CRITICAL FIX: Validate loss to catch NaN early
                 if torch.isnan(loss) or torch.isinf(loss):
                     print(f"WARNING: Invalid loss detected at step {step}")
@@ -276,17 +282,17 @@ def train_reconstructor(
                     print(f"Input IDs range: {input_ids.min().item()} to {input_ids.max().item()}")
                     print(f"Labels range: {labels.min().item()} to {labels.max().item()}")
                     print(f"Number of non-padding tokens: {attention_mask.sum().item()}")
-                    
+
                     # Skip this batch instead of propagating NaN
                     print("Skipping batch due to invalid loss")
                     continue
-                
+
                 # Backward pass with mixed precision
                 if use_amp and device == "cuda":
                     scaler.scale(loss).backward()
                 else:
                     loss.backward()
-                
+
                 # Gradient accumulation
                 if (step + 1) % gradient_accumulation_steps == 0:
                     if use_amp and device == "cuda":
@@ -299,20 +305,20 @@ def train_reconstructor(
                         optimizer.step()
                     scheduler.step()
                     optimizer.zero_grad()
-                
+
                 # Update progress
                 current_loss = loss.item() * gradient_accumulation_steps
                 epoch_loss += current_loss
                 progress_bar.set_postfix({"loss": current_loss})
                 global_step += 1
-                
+
                 # Save checkpoint
                 if global_step % 1000 == 0:
                     checkpoint_dir = os.path.join(output_dir, f"checkpoint-{global_step}")
                     os.makedirs(checkpoint_dir, exist_ok=True)
                     model.save_pretrained(checkpoint_dir)
                     tokenizer.save_pretrained(checkpoint_dir)
-            
+
             except RuntimeError as e:
                 if "out of memory" in str(e):
                     if device == "mps":
@@ -323,66 +329,69 @@ def train_reconstructor(
                         torch.cuda.empty_cache()
                     continue
                 raise e
-        
+
         # Epoch statistics
         avg_loss = epoch_loss / len(dataloader)
-        
+
         # CRITICAL FIX: Handle case where loss might be NaN due to all batches being skipped
         if torch.isnan(torch.tensor(avg_loss)) or torch.isinf(torch.tensor(avg_loss)):
-            print(f"WARNING: Invalid average loss for epoch {epoch+1}: {avg_loss}")
-            avg_loss = float('inf')  # Set to infinity to indicate failure
-        
-        print(f"Epoch {epoch+1}/{epochs} - Average Loss: {avg_loss:.4f}")
-        
-        training_stats.append({
-            "epoch": epoch + 1,
-            "average_loss": avg_loss
-        })
-    
+            print(f"WARNING: Invalid average loss for epoch {epoch + 1}: {avg_loss}")
+            avg_loss = float("inf")  # Set to infinity to indicate failure
+
+        print(f"Epoch {epoch + 1}/{epochs} - Average Loss: {avg_loss:.4f}")
+
+        training_stats.append({"epoch": epoch + 1, "average_loss": avg_loss})
+
     # Save final model
     model.save_pretrained(output_dir)
     tokenizer.save_pretrained(output_dir)
-    
+
     # Save training stats
     with open(os.path.join(output_dir, "training_stats.json"), "w") as f:
         json.dump(training_stats, f, indent=2)
-    
+
     print(f"Model saved to {output_dir}")
 
 
 if __name__ == "__main__":
     import argparse
-    
+
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_path", type=str, required=True,
-                        help="Path to tokenized data")
-    parser.add_argument("--output_dir", type=str, required=True,
-                        help="Directory to save the fine-tuned model")
-    parser.add_argument("--model_name", type=str, default="gpt2",
-                        help="Pretrained model name")
-    parser.add_argument("--batch_size", type=int, default=8,
-                        help="Training batch size")
-    parser.add_argument("--epochs", type=int, default=3,
-                        help="Number of training epochs")
-    parser.add_argument("--learning_rate", type=float, default=5e-5,
-                        help="Learning rate")
-    parser.add_argument("--mask_ratio", type=float, default=0.3,
-                        help="Ratio of tokens to mask")
-    parser.add_argument("--device", type=str, default=None,
-                        help="Device to run training on (cuda, mps, or cpu)")
-    parser.add_argument("--num_workers", type=int, default=4,
-                        help="Number of workers for data loading")
-    parser.add_argument("--gradient_accumulation_steps", type=int, default=1,
-                        help="Number of steps to accumulate gradients")
-    parser.add_argument("--max_length", type=int, default=512,
-                        help="Maximum sequence length")
-    parser.add_argument("--use_amp", action="store_true",
-                        help="Use Automatic Mixed Precision")
-    parser.add_argument("--no_memory_efficient_attention", action="store_true",
-                        help="Disable memory-efficient attention")
-    
+    parser.add_argument("--data_path", type=str, required=True, help="Path to tokenized data")
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        required=True,
+        help="Directory to save the fine-tuned model",
+    )
+    parser.add_argument("--model_name", type=str, default="gpt2", help="Pretrained model name")
+    parser.add_argument("--batch_size", type=int, default=8, help="Training batch size")
+    parser.add_argument("--epochs", type=int, default=3, help="Number of training epochs")
+    parser.add_argument("--learning_rate", type=float, default=5e-5, help="Learning rate")
+    parser.add_argument("--mask_ratio", type=float, default=0.3, help="Ratio of tokens to mask")
+    parser.add_argument(
+        "--device",
+        type=str,
+        default=None,
+        help="Device to run training on (cuda, mps, or cpu)",
+    )
+    parser.add_argument("--num_workers", type=int, default=4, help="Number of workers for data loading")
+    parser.add_argument(
+        "--gradient_accumulation_steps",
+        type=int,
+        default=1,
+        help="Number of steps to accumulate gradients",
+    )
+    parser.add_argument("--max_length", type=int, default=512, help="Maximum sequence length")
+    parser.add_argument("--use_amp", action="store_true", help="Use Automatic Mixed Precision")
+    parser.add_argument(
+        "--no_memory_efficient_attention",
+        action="store_true",
+        help="Disable memory-efficient attention",
+    )
+
     args = parser.parse_args()
-    
+
     train_reconstructor(
         data_path=args.data_path,
         output_dir=args.output_dir,
@@ -396,5 +405,5 @@ if __name__ == "__main__":
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         max_length=args.max_length,
         use_amp=args.use_amp,
-        memory_efficient_attention=not args.no_memory_efficient_attention
-    ) 
+        memory_efficient_attention=not args.no_memory_efficient_attention,
+    )

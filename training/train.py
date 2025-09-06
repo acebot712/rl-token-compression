@@ -1,117 +1,124 @@
 import os
-import sys
 
 # CRITICAL: Set MPS memory configuration BEFORE importing PyTorch
 # This disables the artificial 60% memory limit (28.8GB of 48GB)
-os.environ['PYTORCH_MPS_HIGH_WATERMARK_RATIO'] = '0.0'  # Disable upper limit
-os.environ['PYTORCH_MPS_LOW_WATERMARK_RATIO'] = '0.0'   # Disable lower limit
+os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.0"  # Disable upper limit
+os.environ["PYTORCH_MPS_LOW_WATERMARK_RATIO"] = "0.0"  # Disable lower limit
 print("✓ MPS memory limits disabled - can use full unified memory")
 
-# Add project root to Python path
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
+from transformers import GPT2LMHeadModel, GPT2Tokenizer
 
-import torch
-from transformers import GPT2Tokenizer, GPT2LMHeadModel
-
+from training.distributed import (
+    cleanup_distributed,
+    create_distributed_trainer,
+    get_distributed_config,
+)
 from training.trainer import create_simple_trainer
-from utils.config import setup_validated_config, save_config, resolve_device
-from utils.common import setup_output_dir, print_section_header, print_config_summary
-from utils.errors import (handle_errors, validate_file_exists, validate_directory_writable, 
-                         validate_device_available, check_memory_requirements, ModelError)
-from utils.deterministic import create_reproducible_trainer_config, save_reproducibility_info
-from training.distributed import create_distributed_trainer, get_distributed_config, cleanup_distributed
+from utils.common import print_config_summary, print_section_header, setup_output_dir
+from utils.config import save_config, setup_validated_config
+from utils.deterministic import (
+    create_reproducible_trainer_config,
+    save_reproducibility_info,
+)
+from utils.errors import (
+    ModelError,
+    check_memory_requirements,
+    handle_errors,
+    validate_device_available,
+    validate_directory_writable,
+    validate_file_exists,
+)
 
 
 @handle_errors("training")
 def train(config):
     """Train the token compression system using joint training."""
     print_section_header("RL TOKEN COMPRESSION - JOINT TRAINING")
-    
+
     # Ensure reproducible configuration
     config = create_reproducible_trainer_config(config)
-    
+
     print_config_summary(config)
     print()
-    
+
     # Validate and resolve device
-    config['device'] = validate_device_available(config['device'])
+    config["device"] = validate_device_available(config["device"])
     print(f"Using device: {config['device']}")
-    
+
     # Check memory requirements
-    check_memory_requirements(config['device'], config.get('batch_size', 16), 512)
-    
+    check_memory_requirements(config["device"], config.get("batch_size", 16), 512)
+
     # Validate and setup output directory
-    validate_directory_writable(config['output_dir'], "output")
-    setup_output_dir(config['output_dir'])
-    
+    validate_directory_writable(config["output_dir"], "output")
+    setup_output_dir(config["output_dir"])
+
     # Validate input files
-    validate_file_exists(config['data_path'], "Training data")
-    validate_file_exists(config['reconstructor_path'] + '/config.json', "Reconstructor model")
-    
+    validate_file_exists(config["data_path"], "Training data")
+    validate_file_exists(config["reconstructor_path"] + "/config.json", "Reconstructor model")
+
     # Check for existing checkpoints if resume is enabled
     resume_from = None
-    if config.get('resume', False):
+    if config.get("resume", False):
         # Look for the latest checkpoint
         checkpoint_files = []
-        if os.path.exists(config['output_dir']):
-            for file in os.listdir(config['output_dir']):
-                if file.startswith('checkpoint_step_') and file.endswith('.pt'):
+        if os.path.exists(config["output_dir"]):
+            for file in os.listdir(config["output_dir"]):
+                if file.startswith("checkpoint_step_") and file.endswith(".pt"):
                     checkpoint_files.append(file)
-        
+
         if checkpoint_files:
             # Sort by step number and get the latest
-            checkpoint_files.sort(key=lambda x: int(x.split('_')[-1].split('.')[0]))
-            resume_from = os.path.join(config['output_dir'], checkpoint_files[-1])
+            checkpoint_files.sort(key=lambda x: int(x.split("_")[-1].split(".")[0]))
+            resume_from = os.path.join(config["output_dir"], checkpoint_files[-1])
             print(f"Found checkpoint to resume from: {resume_from}")
         else:
             print("No checkpoint found, starting fresh training")
-    
+
     # Load data
     import json
-    with open(config['data_path'], 'r') as f:
+
+    with open(config["data_path"]) as f:
         train_data = json.load(f)
-    train_sequences = [item['tokens'] for item in train_data]
-    
+    train_sequences = [item["tokens"] for item in train_data]
+
     # Load reconstructor
-    from transformers import GPT2LMHeadModel
+
     try:
-        reconstructor = GPT2LMHeadModel.from_pretrained(config['reconstructor_path'])
-        tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+        reconstructor = GPT2LMHeadModel.from_pretrained(config["reconstructor_path"])
+        tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
     except Exception as e:
         raise ModelError(f"Failed to load reconstructor from {config['reconstructor_path']}: {e}")
-    
+
     # Check if distributed training is requested
     rank, world_size, is_distributed = get_distributed_config()
-    
+
     # Create trainer (distributed or single-process)
     if is_distributed:
         print(f"Setting up distributed training - Rank {rank}/{world_size}")
         trainer = create_distributed_trainer(config, train_sequences, reconstructor, tokenizer)
     else:
         trainer = create_simple_trainer(config, train_sequences, reconstructor, tokenizer)
-    
+
     print("Starting simplified joint training...")
-    
+
     # Train with simple interface
     trainer.train(
         train_data=train_sequences,
-        batch_size=config.get('batch_size', 16),
-        max_epochs=config.get('max_epochs', 50),
-        output_dir=config['output_dir']
+        batch_size=config.get("batch_size", 16),
+        max_epochs=config.get("max_epochs", 50),
+        output_dir=config["output_dir"],
     )
-    
+
     print(f"Joint training complete. Models saved to {config['output_dir']}")
-    
+
     # Save configuration and reproducibility info (main process only for distributed)
     if not is_distributed or rank == 0:
-        config_path = os.path.join(config['output_dir'], "training_config.json")
+        config_path = os.path.join(config["output_dir"], "training_config.json")
         save_config(config, config_path)
-        save_reproducibility_info(config['output_dir'], config)
-    
+        save_reproducibility_info(config["output_dir"], config)
+
     # Cleanup distributed training
     if is_distributed:
         cleanup_distributed()
@@ -131,8 +138,8 @@ if __name__ == "__main__":
         "reward_type": "simple",
         "device": "auto",
         "resume": False,
-        "debug": False
+        "debug": False,
     }
-    
+
     config = setup_validated_config(default_config, "RL Token Compression Training", "training")
     train(config)

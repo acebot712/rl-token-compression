@@ -7,4 +7,4 @@ evaluating compression methods, training progress, and model performance.
 
 from .visualize import create_comprehensive_visualization
 
-__all__ = ['create_comprehensive_visualization']
+__all__ = ["create_comprehensive_visualization"]

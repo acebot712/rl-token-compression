@@ -18,9 +18,9 @@ pip install -r requirements.txt
 
 **Basic workflow:**
 ```bash
-python data/prepare.py --config configs/data_sample.json
-python training/train.py --config configs/training.json  # or training_mps.json / training_cuda.json
-python evaluation/evaluate.py --config configs/evaluation.json
+python data/prepare.py --config configs/data/sample.json
+python training/train.py --config configs/training/default.json  # or mps.json / cuda.json
+python evaluation/evaluate.py --config configs/evaluation/default.json
 ```
 
 ## Key Results
@@ -42,41 +42,45 @@ python evaluation/evaluate.py --config configs/evaluation.json
 
 ## Configuration
 
-All configs are in `configs/`:
+All configs are organized in `configs/` with clear hierarchical structure:
 
-**Base Config:**
-- `base.json` - Base configuration with common defaults (inherited by other configs)
+**Base Configuration:**
+- `configs/base.json` - Base configuration with common defaults (inherited by other configs)
 
-**Production Configs:**
-- `data.json` - Full dataset preparation for production training
-- `data_sample.json` - Sample dataset (1000 sequences) for testing/development
-- `training.json` - Conservative production training (device=auto, batch_size=64, works across hardware)
-- `training_mps.json` - **MPS-optimized** (Apple Silicon, batch_size=16, memory-efficient, proven working)
-- `training_cuda.json` - **CUDA-optimized** (NVIDIA GPUs, batch_size=256, high-performance)
-- `training_debug.json` - Debug training (1 epoch, 10 steps, minimal resources)
-- `evaluation.json` - Comprehensive evaluation with all baselines
+**Data Preparation:**
+- `configs/data/full.json` - Full dataset preparation for production training
+- `configs/data/sample.json` - Sample dataset (1000 sequences) for testing/development
+
+**Training Configurations:**
+- `configs/training/default.json` - Conservative production training (device=auto, batch_size=64, works across hardware)
+- `configs/training/mps.json` - **MPS-optimized** (Apple Silicon, batch_size=16, memory-efficient, proven working)
+- `configs/training/cuda.json` - **CUDA-optimized** (NVIDIA GPUs, batch_size=256, high-performance)
+- `configs/training/debug.json` - Debug training (1 epoch, 10 steps, minimal resources)
+
+**Evaluation:**
+- `configs/evaluation/default.json` - Comprehensive evaluation with all baselines
 
 **Integration Test Configs:**
-- `integration_data.json` - Ultra-minimal dataset (10 sequences) for fast testing
-- `integration_training.json` - Ultra-fast training (1 epoch, 3 steps) for pipeline validation
-- `integration_evaluation.json` - Minimal evaluation (5 sequences) for smoke testing
+- `configs/integration/data.json` - Ultra-minimal dataset (10 sequences) for fast testing
+- `configs/integration/training.json` - Ultra-fast training (1 epoch, 3 steps) for pipeline validation
+- `configs/integration/evaluation.json` - Minimal evaluation (5 sequences) for smoke testing
 
-Override any parameter via CLI: `python training/train.py --config configs/training.json --batch_size 128`
+Override any parameter via CLI: `python training/train.py --config configs/training/default.json --batch_size 128`
 
 ### Advanced Features
 
 **Distributed Training:**
 ```bash
 # Single node, 2 GPUs
-python scripts/launch_distributed.py --config configs/training.json --gpus 2
+python scripts/launch_distributed.py --config configs/training/default.json --gpus 2
 
 # Multi-node setup
-torchrun --nproc_per_node=2 --nnodes=2 training/train.py --config configs/training.json
+torchrun --nproc_per_node=2 --nnodes=2 training/train.py --config configs/training/default.json
 ```
 
 **Hyperparameter Optimization:**
 ```bash
-python scripts/hyperopt_train.py --config configs/training.json --max-trials 50
+python scripts/hyperopt_train.py --config configs/training/default.json --max-trials 50
 ```
 
 ## Directory Structure
@@ -95,17 +99,17 @@ rl-token-compression/
 ## Hardware Optimization
 
 **Apple Silicon (MPS):**
-- Use `configs/training_mps.json` (proven working: batch_size=16, micro_batch_size=2)
+- Use `configs/training/mps.json` (proven working: batch_size=16, micro_batch_size=2)
 - Memory management handled automatically
 - Gradient accumulation enables effective batch sizes without OOM
 
 **NVIDIA GPUs (CUDA):**
-- Use `configs/training_cuda.json` (high-performance: batch_size=256, micro_batch_size=16)
+- Use `configs/training/cuda.json` (high-performance: batch_size=256, micro_batch_size=16)
 - Leverages GPU memory capacity for faster training
 - Higher learning rates for efficient convergence
 
 **CPU/Unknown Hardware:**
-- Use `configs/training.json` (conservative: batch_size=64, device=auto)
+- Use `configs/training/default.json` (conservative: batch_size=64, device=auto)
 - Safe defaults that work across different hardware configurations
 
 ## Setup & Installation

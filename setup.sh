@@ -115,6 +115,19 @@ detect_compute_platform() {
             GPU_COUNT=$(nvidia-smi --list-gpus | wc -l)
             GPU_INFO="NVIDIA GPUs detected: $GPU_COUNT"
             print_info "$GPU_INFO"
+            
+            # Check for specific GPU models for optimized configs
+            GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader,nounits | head -1)
+            if echo "$GPU_NAME" | grep -qi "T4"; then
+                GPU_MODEL="t4"
+                print_info "T4 GPU detected - will use T4-optimized config"
+            elif echo "$GPU_NAME" | grep -qi "V100\|A100\|RTX"; then
+                GPU_MODEL="high_end"
+                print_info "High-end GPU detected - will use CUDA-optimized config"
+            else
+                GPU_MODEL="standard"
+                print_info "Standard GPU detected - will use CUDA-optimized config"
+            fi
         fi
     fi
     
@@ -305,9 +318,9 @@ echo "  Python: $(python --version)"
 echo "  Working directory: $(pwd)"
 echo ""
 echo "Quick start:"
-echo "  python data/prepare.py --config configs/data_sample.json"
-echo "  python training/train.py --config configs/training.json"
-echo "  python evaluation/evaluate.py --config configs/evaluation.json"
+echo "  python data/prepare.py --config configs/data/sample.json"
+echo "  python training/train.py --config configs/training/default.json"
+echo "  python evaluation/evaluate.py --config configs/evaluation/default.json"
 echo ""
 EOF
     
@@ -330,10 +343,10 @@ print_completion() {
     echo "   ${BLUE}./setup.sh --validate-production${NC} # Complete validation"
     echo ""
     echo "3. Run quick test manually:"
-    echo "   ${BLUE}python data/prepare.py --config configs/data_sample.json${NC}"
+    echo "   ${BLUE}python data/prepare.py --config configs/data/sample.json${NC}"
     echo ""
     echo "4. Start training:"
-    echo "   ${BLUE}python training/train.py --config configs/training.json${NC}"
+    echo "   ${BLUE}python training/train.py --config configs/training/default.json${NC}"
     echo ""
     echo "System info:"
     echo "  Platform: $COMPUTE_PLATFORM"
@@ -363,7 +376,7 @@ run_integration_tests() {
     rm -rf integration/outputs/
     
     echo "   Testing data preparation pipeline..."
-    if python data/prepare.py --config configs/integration_data.json 2>&1 | tee -a integration_test.log; then
+    if python data/prepare.py --config configs/integration/data.json 2>&1 | tee -a integration_test.log; then
         print_success "✓ Data preparation successful"
     else
         print_error "✗ Data preparation failed - check integration_test.log"
@@ -372,7 +385,7 @@ run_integration_tests() {
     fi
     
     echo "   Testing training pipeline..."  
-    if python training/train.py --config configs/integration_training.json 2>&1 | tee -a integration_test.log; then
+    if python training/train.py --config configs/integration/training.json 2>&1 | tee -a integration_test.log; then
         print_success "✓ Training pipeline successful"
     else
         print_error "✗ Training pipeline failed - check integration_test.log"
@@ -381,7 +394,7 @@ run_integration_tests() {
     fi
     
     echo "   Testing evaluation pipeline..."
-    if python evaluation/evaluate.py --config configs/integration_evaluation.json 2>&1 | tee -a integration_test.log; then
+    if python evaluation/evaluate.py --config configs/integration/evaluation.json 2>&1 | tee -a integration_test.log; then
         print_success "✓ Evaluation pipeline successful"
     else
         print_error "✗ Evaluation pipeline failed - check integration_test.log"
@@ -421,7 +434,7 @@ run_production_validation() {
     rm -rf outputs/data_sample outputs/training_debug outputs/evaluation_sample
     
     echo "   Testing with data_sample.json..."
-    if python data/prepare.py --config configs/data_sample.json 2>&1 | tee production_test.log; then
+    if python data/prepare.py --config configs/data/sample.json 2>&1 | tee production_test.log; then
         print_success "✓ Sample data preparation successful"
     else
         print_error "✗ Sample data preparation failed - check production_test.log"
@@ -432,7 +445,7 @@ run_production_validation() {
     echo "   Testing with training_debug.json..."
     # Update training_debug.json to use the sample data we just created
     local temp_config=$(mktemp)
-    jq '.data_path = "outputs/data_sample/processed_data.json" | .val_data_path = "outputs/data_sample/val_data.json"' configs/training_debug.json > "$temp_config"
+    jq '.data_path = "outputs/data_sample/processed_data.json" | .val_data_path = "outputs/data_sample/val_data.json"' configs/training/debug.json > "$temp_config"
     
     if python training/train.py --config "$temp_config" 2>&1 | tee -a production_test.log; then
         print_success "✓ Debug training successful"
@@ -447,7 +460,7 @@ run_production_validation() {
     echo "   Testing evaluation..."
     # Update evaluation config to use our trained model and test data
     local temp_eval=$(mktemp)
-    jq '.model_path = "debug/run/best_model.zip" | .data_path = "outputs/data_sample/test_data.json" | .output_dir = "outputs/evaluation_sample"' configs/evaluation.json > "$temp_eval"
+    jq '.model_path = "debug/run/best_model.zip" | .data_path = "outputs/data_sample/test_data.json" | .output_dir = "outputs/evaluation_sample"' configs/evaluation/default.json > "$temp_eval"
     
     if python evaluation/evaluate.py --config "$temp_eval" 2>&1 | tee -a production_test.log; then
         print_success "✓ Sample evaluation successful"
@@ -481,7 +494,7 @@ run_full_research_test() {
     rm -rf outputs/research_test
     
     echo "   Phase 1: Full data preparation (may take 30+ minutes)..."
-    if python data/prepare.py --config configs/data.json --output_dir outputs/research_test/data 2>&1 | tee full_research_test.log; then
+    if python data/prepare.py --config configs/data/full.json --output_dir outputs/research_test/data 2>&1 | tee full_research_test.log; then
         print_success "✓ Full data preparation successful"
     else
         print_error "✗ Full data preparation failed - check full_research_test.log"
@@ -493,20 +506,34 @@ run_full_research_test() {
     
     # Detect compute platform for this specific run
     local detected_platform="cpu"
+    local gpu_model="standard"
+    
     if command_exists nvidia-smi && nvidia-smi >/dev/null 2>&1; then
         detected_platform="cuda"
+        # Check for specific GPU models
+        local gpu_name=$(nvidia-smi --query-gpu=name --format=csv,noheader,nounits | head -1)
+        if echo "$gpu_name" | grep -qi "T4"; then
+            gpu_model="t4"
+        elif echo "$gpu_name" | grep -qi "V100\|A100\|RTX"; then
+            gpu_model="high_end"
+        fi
     elif [[ "$(uname -s)" == "Darwin" ]] && [[ "$(uname -m)" == "arm64" ]]; then
         detected_platform="mps"
     fi
     
-    # Select appropriate config based on detected compute platform
-    local base_config="configs/training.json"  # Conservative default
+    # Select appropriate config based on detected compute platform and GPU model
+    local base_config="configs/training/default.json"  # Conservative default
     if [[ "$detected_platform" == "mps" ]]; then
-        base_config="configs/training_mps.json"
+        base_config="configs/training/mps.json"
         echo "   ✓ Detected Apple Silicon - Using MPS-optimized config (batch_size=16, memory-efficient)..."
     elif [[ "$detected_platform" == "cuda" ]]; then
-        base_config="configs/training_cuda.json"
-        echo "   ✓ Detected NVIDIA GPU - Using CUDA-optimized config (batch_size=256, high-performance)..."
+        if [[ "$gpu_model" == "t4" ]]; then
+            base_config="configs/training/t4.json"
+            echo "   ✓ Detected T4 GPU - Using T4-optimized config (batch_size=64, accelerate+DeepSpeed)..."
+        else
+            base_config="configs/training/cuda.json"
+            echo "   ✓ Detected NVIDIA GPU - Using CUDA-optimized config (batch_size=256, high-performance)..."
+        fi
     else
         echo "   ✓ Using conservative default config (batch_size=64, device=auto)..."
     fi
@@ -538,7 +565,7 @@ run_full_research_test() {
     echo "   Phase 3: Full evaluation with all baselines..."
     # Create temporary evaluation config
     local temp_eval=$(mktemp)
-    jq '.model_path = "outputs/research_test/training/best_model.zip" | .data_path = "outputs/research_test/data/test_data.json" | .output_dir = "outputs/research_test/evaluation"' configs/evaluation.json > "$temp_eval"
+    jq '.model_path = "outputs/research_test/training/best_model.zip" | .data_path = "outputs/research_test/data/test_data.json" | .output_dir = "outputs/research_test/evaluation"' configs/evaluation/default.json > "$temp_eval"
     
     if python evaluation/evaluate.py --config "$temp_eval" 2>&1 | tee -a full_research_test.log; then
         print_success "✓ Full evaluation successful"
