@@ -11,7 +11,7 @@ INSTANCE_NAME="rl-token-compression"
 ZONE="us-central1-a"
 MACHINE_TYPE="n1-standard-4"
 ACCELERATOR="type=nvidia-tesla-t4,count=1"
-BOOT_DISK_SIZE="50GB"
+BOOT_DISK_SIZE="100GB"
 REPO_URL="${REPO_URL:-https://github.com/yourusername/rl-token-compression.git}"
 
 # Colors for output
@@ -28,157 +28,177 @@ print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 # Check if gcloud is installed
 check_gcloud() {
-    if ! command -v gcloud &> /dev/null; then
+    # Try to find gcloud in common locations
+    if command -v gcloud &> /dev/null; then
+        GCLOUD_CMD="gcloud"
+    elif [ -f "$HOME/google-cloud-sdk/bin/gcloud" ]; then
+        GCLOUD_CMD="$HOME/google-cloud-sdk/bin/gcloud"
+    else
         print_error "gcloud CLI not found. Install it from: https://cloud.google.com/sdk/docs/install"
         exit 1
     fi
 }
 
-# Check credits (approximate)
-check_credits() {
-    print_info "Checking GCloud billing..."
-    BILLING_ACCOUNT=$(gcloud billing accounts list --format="value(name)" --limit=1)
-    if [ -z "$BILLING_ACCOUNT" ]; then
-        print_warning "No billing account found. Make sure billing is enabled."
-    else
-        print_info "Active billing account: $BILLING_ACCOUNT"
-        # Note: Actual credit balance requires billing API permissions
-        print_info "To see detailed credits, visit: https://console.cloud.google.com/billing"
-    fi
+# Create startup script that will run on instance boot
+create_startup_script() {
+    cat > /tmp/startup-script.sh << 'EOF'
+#!/bin/bash
+# This runs automatically when instance starts
+
+# Install dependencies
+apt-get update
+apt-get install -y python3 python3-pip python3-venv git build-essential wget
+
+# Install NVIDIA drivers and CUDA
+if ! nvidia-smi &> /dev/null; then
+    echo "Installing NVIDIA drivers..."
+    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+    distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+    curl -s -L https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list | \
+        sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+        sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+    
+    apt-get update
+    apt-get install -y nvidia-driver-535 nvidia-utils-535
+fi
+
+# Create marker file when setup is complete
+touch /tmp/setup-complete
+EOF
 }
 
-# Create T4 instance
+# Create and setup instance with a single command
 create_instance() {
     print_info "Creating T4 instance '$INSTANCE_NAME' in zone $ZONE..."
     
     # Check if instance already exists
-    if gcloud compute instances describe $INSTANCE_NAME --zone=$ZONE &>/dev/null; then
-        print_warning "Instance already exists. Use 'start' or 'ssh' command."
-        return 1
+    if $GCLOUD_CMD compute instances describe $INSTANCE_NAME --zone=$ZONE &>/dev/null; then
+        print_warning "Instance already exists. Connecting to it..."
+        ssh_instance
+        return 0
     fi
     
-    gcloud compute instances create $INSTANCE_NAME \
+    # Create startup script
+    create_startup_script
+    
+    # Create instance with startup script
+    print_info "Creating instance with GPU..."
+    $GCLOUD_CMD compute instances create $INSTANCE_NAME \
         --zone=$ZONE \
         --machine-type=$MACHINE_TYPE \
         --accelerator=$ACCELERATOR \
-        --image-family=pytorch-latest-gpu \
-        --image-project=deeplearning-platform-release \
+        --image-family=debian-11 \
+        --image-project=debian-cloud \
         --maintenance-policy=TERMINATE \
         --boot-disk-size=$BOOT_DISK_SIZE \
-        --boot-disk-type=pd-standard \
+        --boot-disk-type=pd-balanced \
+        --metadata-from-file startup-script=/tmp/startup-script.sh \
         --metadata="install-nvidia-driver=True" \
         --scopes=https://www.googleapis.com/auth/cloud-platform
     
-    print_success "Instance created successfully!"
-    print_info "Waiting for instance to be ready..."
-    sleep 30
+    print_success "Instance created!"
+    print_info "Waiting for instance to initialize (60 seconds)..."
+    sleep 60
     
-    # Install repo and dependencies automatically
-    print_info "Setting up RL Token Compression on the instance..."
-    gcloud compute ssh $INSTANCE_NAME --zone=$ZONE --command="
-        git clone $REPO_URL && \
-        cd rl-token-compression && \
-        echo '✓ Repository cloned' && \
-        python3 -c 'import torch; print(f\"✓ GPU Available: {torch.cuda.is_available()}\")' && \
-        echo '✓ Instance ready for training!'
-    " || print_warning "Initial setup will complete on first SSH"
+    # Setup repository and run training
+    print_info "Setting up repository and starting training..."
+    $GCLOUD_CMD compute ssh $INSTANCE_NAME --zone=$ZONE --command="
+        # Clone repository
+        if [ ! -d 'rl-token-compression' ]; then
+            git clone $REPO_URL
+        fi
+        
+        cd rl-token-compression
+        
+        # The make command handles everything else
+        echo '====================================='
+        echo 'Starting automatic training pipeline'
+        echo '====================================='
+        make pipeline-debug
+    "
     
-    print_success "Instance is ready! Use './launch-gcloud.sh ssh' to connect"
+    print_success "Training completed! Check the results above."
+}
+
+# Simple one-command execution
+one_command_run() {
+    print_info "Starting one-command execution..."
+    
+    # Check if instance exists
+    if $GCLOUD_CMD compute instances describe $INSTANCE_NAME --zone=$ZONE &>/dev/null; then
+        print_info "Instance exists. Starting training..."
+        $GCLOUD_CMD compute ssh $INSTANCE_NAME --zone=$ZONE --command="
+            cd rl-token-compression && make pipeline-debug
+        "
+    else
+        # Create instance and run
+        create_instance
+    fi
 }
 
 # SSH into instance
 ssh_instance() {
     print_info "Connecting to instance '$INSTANCE_NAME'..."
-    gcloud compute ssh $INSTANCE_NAME --zone=$ZONE
+    $GCLOUD_CMD compute ssh $INSTANCE_NAME --zone=$ZONE
 }
 
-# Stop instance (save money when not using)
+# Stop instance (save money)
 stop_instance() {
     print_info "Stopping instance '$INSTANCE_NAME'..."
-    gcloud compute instances stop $INSTANCE_NAME --zone=$ZONE
-    print_success "Instance stopped. Billing paused. Use 'start' to resume."
+    $GCLOUD_CMD compute instances stop $INSTANCE_NAME --zone=$ZONE
+    print_success "Instance stopped. Billing paused."
 }
 
 # Start instance
 start_instance() {
     print_info "Starting instance '$INSTANCE_NAME'..."
-    gcloud compute instances start $INSTANCE_NAME --zone=$ZONE
-    print_success "Instance started. Use 'ssh' to connect."
+    $GCLOUD_CMD compute instances start $INSTANCE_NAME --zone=$ZONE
+    print_success "Instance started."
 }
 
-# Delete instance completely
+# Delete instance
 delete_instance() {
-    print_warning "This will permanently delete the instance and all data!"
+    print_warning "This will permanently delete the instance!"
     read -p "Are you sure? (y/N): " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        print_info "Deleting instance '$INSTANCE_NAME'..."
-        gcloud compute instances delete $INSTANCE_NAME --zone=$ZONE --quiet
+        $GCLOUD_CMD compute instances delete $INSTANCE_NAME --zone=$ZONE --quiet
         print_success "Instance deleted."
-    else
-        print_info "Deletion cancelled."
     fi
 }
 
-# Check instance status
-check_status() {
-    print_info "Checking instance status..."
-    if gcloud compute instances describe $INSTANCE_NAME --zone=$ZONE &>/dev/null; then
-        STATUS=$(gcloud compute instances describe $INSTANCE_NAME --zone=$ZONE --format="value(status)")
-        IP=$(gcloud compute instances describe $INSTANCE_NAME --zone=$ZONE --format="value(networkInterfaces[0].accessConfigs[0].natIP)")
+# Check status
+status() {
+    if $GCLOUD_CMD compute instances describe $INSTANCE_NAME --zone=$ZONE &>/dev/null; then
+        STATUS=$($GCLOUD_CMD compute instances describe $INSTANCE_NAME --zone=$ZONE --format="value(status)")
+        print_info "Instance status: $STATUS"
         
         if [ "$STATUS" = "RUNNING" ]; then
-            print_success "Instance is $STATUS (IP: $IP)"
-            
-            # Check if GPU is working
-            gcloud compute ssh $INSTANCE_NAME --zone=$ZONE --command="nvidia-smi -L" &>/dev/null && \
-                print_success "GPU is available and working" || \
-                print_warning "GPU status unknown"
-        else
-            print_info "Instance status: $STATUS"
+            # Check GPU
+            $GCLOUD_CMD compute ssh $INSTANCE_NAME --zone=$ZONE --command="nvidia-smi -L 2>/dev/null" &>/dev/null && \
+                print_success "GPU is available" || \
+                print_warning "GPU not detected"
         fi
     else
-        print_info "No instance found. Use 'create' to create one."
+        print_info "No instance found."
     fi
-}
-
-# Run quick training pipeline
-run_quick() {
-    print_info "Running quick training pipeline (10 minutes)..."
-    gcloud compute ssh $INSTANCE_NAME --zone=$ZONE --command="
-        cd rl-token-compression && \
-        make pipeline-debug 2>&1 | tee training_quick.log && \
-        echo '✓ Quick training completed! Check training_quick.log for results'
-    "
-}
-
-# Run full training pipeline
-run_full() {
-    print_info "Running full training pipeline (this will take hours)..."
-    print_warning "Consider using tmux/screen to keep training running if connection drops"
-    
-    gcloud compute ssh $INSTANCE_NAME --zone=$ZONE --command="
-        cd rl-token-compression && \
-        nohup make pipeline-full > training_full.log 2>&1 & \
-        echo 'Training started in background. Check progress with:' && \
-        echo '  tail -f rl-token-compression/training_full.log'
-    "
-    
-    print_success "Training started in background!"
-    print_info "To check progress: ./launch-gcloud.sh ssh"
-    print_info "Then run: tail -f rl-token-compression/training_full.log"
 }
 
 # Main command handler
 main() {
     check_gcloud
     
-    case "${1:-help}" in
+    # Default to one-command execution if no args
+    if [ $# -eq 0 ]; then
+        one_command_run
+        exit 0
+    fi
+    
+    case "$1" in
         create)
-            check_credits
             create_instance
             ;;
-        ssh|connect)
+        ssh)
             ssh_instance
             ;;
         stop)
@@ -187,53 +207,34 @@ main() {
         start)
             start_instance
             ;;
-        delete|destroy)
+        delete)
             delete_instance
             ;;
         status)
-            check_status
+            status
             ;;
-        run-quick|quick)
-            run_quick
+        run|quick)
+            one_command_run
             ;;
-        run-full|full)
-            run_full
-            ;;
-        all-quick)
-            # One command to do everything quickly
-            check_credits
-            create_instance && \
-            sleep 5 && \
-            run_quick
-            ;;
-        help|*)
-            echo "GCloud T4 Instance Manager for RL Token Compression"
-            echo ""
+        help)
             echo "Usage: $0 [command]"
             echo ""
-            echo "Commands:"
-            echo "  create      - Create new T4 instance with everything set up"
-            echo "  ssh         - Connect to instance via SSH"
-            echo "  stop        - Stop instance (pause billing)"
-            echo "  start       - Start stopped instance"
-            echo "  delete      - Delete instance permanently"
-            echo "  status      - Check instance and GPU status"
-            echo "  run-quick   - Run quick training pipeline (10 min)"
-            echo "  run-full    - Run full training pipeline (hours)"
-            echo "  all-quick   - Create instance and run quick pipeline"
+            echo "No arguments     - Create instance and run training automatically"
+            echo "create           - Create instance and run training"
+            echo "ssh              - Connect to instance"
+            echo "stop             - Stop instance (save money)"
+            echo "start            - Start instance"
+            echo "delete           - Delete instance"
+            echo "status           - Check status"
             echo ""
-            echo "Examples:"
-            echo "  $0 create           # Create instance"
-            echo "  $0 ssh              # Connect to instance"
-            echo "  $0 run-quick        # Run quick test"
-            echo "  $0 stop             # Stop to save money"
-            echo "  $0 all-quick        # Do everything in one command"
-            echo ""
-            echo "Set REPO_URL environment variable to use your own repo:"
-            echo "  export REPO_URL=https://github.com/yourusername/rl-token-compression.git"
+            echo "Simplest usage:"
+            echo "  $0              # Does everything automatically"
+            ;;
+        *)
+            one_command_run
             ;;
     esac
 }
 
-# Run main function
+# Run main
 main "$@"
