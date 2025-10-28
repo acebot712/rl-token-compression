@@ -4,10 +4,23 @@ Reinforcement learning system that learns to compress text by selectively maskin
 
 ## Quick Start
 
-**One-command setup:**
+**Try the demo (< 5 seconds):**
 ```bash
-./setup.sh
+./setup.sh && source activate.sh
+python demo.py
+```
+
+**Run baseline evaluation:**
+```bash
 source activate.sh
+python evaluation/evaluate.py --config configs/evaluation/baseline_only.json
+```
+
+**Full training pipeline (requires trained models):**
+```bash
+python data/prepare.py --config configs/data/sample.json
+python training/train.py --config configs/training/default.json  # or mps.json / cuda.json
+python evaluation/evaluate.py --config configs/evaluation/default.json
 ```
 
 **Manual setup:**
@@ -16,19 +29,28 @@ python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-**Basic workflow:**
-```bash
-python data/prepare.py --config configs/data/sample.json
-python training/train.py --config configs/training/default.json  # or mps.json / cuda.json
-python evaluation/evaluate.py --config configs/evaluation/default.json
-```
-
 ## Key Results
 
-- **35-50% compression** with >90% semantic preservation
-- **2-3x inference speedup** on compressed sequences  
-- **Outperforms baselines**: random (15%), frequency-based (25%)
-- **Stable training** in 50 epochs on Apple Silicon M4 Pro
+**Baseline Compression Performance (1000 sequences, 30% target):**
+- Random: 29.5% token retention
+- Frequency-based: 29.5% token retention
+- Length-based: 29.5% token retention
+- Position-based: 29.5% token retention
+
+*Baseline evaluation results available in `outputs/evaluation_baseline/`*
+
+**Important Notes:**
+- Results above show baseline compression ratios only
+- Reconstruction quality requires full pipeline: compress → GPT-2 reconstruct → measure
+- No trained RL agent available yet for end-to-end evaluation
+- See `EVALUATION_NOTES.md` for detailed explanation of metrics
+
+**Inference Speed:** Not yet benchmarked. Theoretical speedup from token compression depends on:
+- Compression ratio achieved
+- Overhead of compression decision (policy network forward pass)
+- Reconstructor model efficiency
+
+End-to-end speed measurements will be added once trained models are available.
 
 ## Architecture
 
